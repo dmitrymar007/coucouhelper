@@ -333,12 +333,18 @@ pub fn refresh_click_through(app: &AppHandle, gate: &PollGate) {
 
 /// Last button state the shell reported, to see presses begin.
 static SHELL_PRESSED: AtomicBool = AtomicBool::new(false);
+static SHELL_POINTER_SEEN: AtomicBool = AtomicBool::new(false);
 
 /// The pointer as the desktop shell reports it (GNOME extension), anywhere
-/// on screen. It steers Mochi's eyes, and a press away from the open island
-/// folds it — a click elsewhere is a click elsewhere.
+/// on screen and always current — unlike the page's own mouse events, which
+/// stop at the edge of the input region and may never say the pointer left.
+/// So it drives the island the way the Windows cursor poll does: hover,
+/// Mochi's eyes, and a press away from the open island folds it.
 pub fn shell_pointer(app: &AppHandle, gate: &PollGate, x: f64, y: f64, pressed: bool) {
-    let _ = app.emit_to(WINDOW_LABEL, "cursor-far", CursorPayload { x, y });
+    if !SHELL_POINTER_SEEN.swap(true, Ordering::Relaxed) {
+        crate::log::line("pointer arrives from the GNOME extension");
+    }
+    let _ = app.emit_to(WINDOW_LABEL, "cursor", CursorPayload { x, y });
     let began = pressed && !SHELL_PRESSED.swap(pressed, Ordering::Relaxed);
     if !pressed {
         SHELL_PRESSED.store(false, Ordering::Relaxed);

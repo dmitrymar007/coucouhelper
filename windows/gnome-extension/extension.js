@@ -145,10 +145,12 @@ class Island {
         ];
         this._raise();
         this._place();
+        this._moveClockAside();
         log(`coucou: island adopted (pid ${this._pid})`);
     }
 
     _forget() {
+        this._restoreClock();
         if (!this._window)
             return;
         for (const id of this._windowSignals)
@@ -169,6 +171,32 @@ class Island {
             return;
         parent?.remove_child(actor);
         global.top_window_group.add_child(actor);
+    }
+
+    /**
+     * The island sits where GNOME puts the clock, so while it is there the
+     * clock moves to the left end of the top bar — the way the Mac's menu bar
+     * keeps clear of the notch — and goes back when the island does.
+     */
+    _moveClockAside() {
+        const clock = Main.panel.statusArea.dateMenu?.container;
+        const left = Main.panel._leftBox;
+        const parent = clock?.get_parent();
+        if (this._clock || !clock || !left || !parent || parent === left)
+            return;
+        this._clock = {parent, index: parent.get_children().indexOf(clock)};
+        parent.remove_child(clock);
+        left.add_child(clock);
+    }
+
+    _restoreClock() {
+        const saved = this._clock;
+        this._clock = null;
+        const clock = Main.panel.statusArea.dateMenu?.container;
+        if (!saved || !clock || clock.get_parent() !== Main.panel._leftBox)
+            return;
+        Main.panel._leftBox.remove_child(clock);
+        saved.parent.insert_child_at_index(clock, Math.max(0, saved.index));
     }
 
     /** Back among ordinary windows, where Mutter expects it. */
