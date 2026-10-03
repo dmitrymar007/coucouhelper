@@ -2,7 +2,7 @@
 
 ## Unreleased (coucouhelper, Linux)
 
-- GNOME on Wayland (temporary, until the GNOME Shell extension): Coucou runs through Xwayland, where the island is a dock window right on the top edge, over the top bar, instead of a window GNOME drops below it. `COUCOU_X11=0` keeps native Wayland.
+- GNOME on Wayland (temporary, until the GNOME Shell extension): Coucou runs through Xwayland, where the island is a dock window centred right below the top bar, with its header and wake strip in reach, instead of a window GNOME places wherever it likes. `COUCOU_X11=0` keeps native Wayland.
 - Linux: Mochi's eyes follow the pointer outside the island too, wherever X11 can see it.
 - Linux: the island folds 2 seconds after the pointer leaves it on the overview, finished, error and note views — the closest thing to the Mac's click-outside, which Linux never reports to the app.
 

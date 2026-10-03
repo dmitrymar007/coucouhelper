@@ -170,9 +170,10 @@ What changes on Linux:
   anywhere.
 - **GNOME** has no layer-shell. For now (a temporary measure until the GNOME
   Shell extension) Coucou runs there through Xwayland, where the island is an
-  X11 dock window on the top edge, over the top bar. `COUCOU_X11=0` keeps
-  native Wayland, where the island is a regular window GNOME places below the
-  top bar; an explicit `GDK_BACKEND` always wins.
+  X11 dock window centred right below the top bar: GNOME Shell draws the bar
+  over every window, so the island cannot go over it. `COUCOU_X11=0` keeps
+  native Wayland, where the island is a regular window GNOME places as it
+  likes; an explicit `GDK_BACKEND` always wins.
 - **Click-through** is the window's input region, kept equal to the island
   shape, so the compositor sends every other click to what is underneath. The
   app never hears of a click elsewhere, so instead of the Mac's click-outside
