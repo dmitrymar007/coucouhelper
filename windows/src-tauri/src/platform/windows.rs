@@ -148,7 +148,11 @@ pub fn current_user_sid() -> Option<String> {
 // ── Cursor ────────────────────────────────────────────────────────────────────
 
 /// The 60 Hz poll reads the cursor and flips click-through from it.
-pub const CURSOR_POLL: bool = true;
+pub const CLICK_THROUGH_BY_REGION: bool = false;
+
+pub fn cursor_poll() -> bool {
+    true
+}
 
 /// Cursor position in physical screen pixels.
 pub fn cursor_physical() -> Option<(f64, f64)> {
@@ -233,3 +237,8 @@ pub fn set_activating(win: &WebviewWindow, activating: bool) {
 
 /// Click-through here is the poll's WS_EX_TRANSPARENT toggle, not a region.
 pub fn set_input_region(_win: &WebviewWindow, _rect: Option<(f64, f64, f64, f64)>) {}
+
+/// The island sits right against the top edge of the screen.
+pub fn top_inset(_pos: (i32, i32), _size: (u32, u32)) -> i32 {
+    0
+}

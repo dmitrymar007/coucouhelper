@@ -9,6 +9,11 @@
 //     the compositor itself sends every other click to whatever is underneath;
 //   * the cursor comes from the page's own mouse events, which only fire over
 //     the island — Mochi's eyes follow the pointer there, not across the screen.
+//
+// On GNOME (no layer-shell) the app runs through Xwayland for now — a
+// temporary measure until the GNOME Shell extension: the island is then an X11
+// dock window at the top edge, and X11 also tells Mochi's eyes where the
+// pointer is, as long as it is over an X11 window.
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -60,12 +65,59 @@ pub fn local_dir() -> PathBuf {
 /// every launch, so each launch would rewrite the system's registry with
 /// plugin paths that vanish once Coucou quits. Give ours its own file.
 pub fn prepare_environment() {
+    prefer_x11_on_gnome();
+    X11.store(gdk_backend_is_x11(), Ordering::Relaxed);
+
     if std::env::var_os("APPIMAGE").is_none() || std::env::var_os("GST_REGISTRY").is_some() {
         return;
     }
     let cache = xdg("XDG_CACHE_HOME", ".cache").join("coucou");
     if std::fs::create_dir_all(&cache).is_ok() {
         std::env::set_var("GST_REGISTRY", cache.join("gstreamer-registry.bin"));
+    }
+}
+
+/// True when GTK runs on X11 (Xwayland included): the island can then be
+/// placed by coordinates and the cursor read anywhere X11 can see it.
+static X11: AtomicBool = AtomicBool::new(false);
+
+/// TEMPORARY (until the GNOME Shell extension): GNOME's Wayland session has no
+/// layer-shell, so a native Wayland island is an ordinary window the
+/// compositor places wherever it likes, under the top bar. Through Xwayland it
+/// can be a dock window: pinned to the top edge by coordinates, above other
+/// windows. `COUCOU_X11=0` keeps native Wayland; an explicit `GDK_BACKEND`
+/// always wins.
+fn prefer_x11_on_gnome() {
+    let wanted = std::env::var("COUCOU_X11").map(|v| v != "0").unwrap_or(true);
+    let gnome = desktop_is_gnome(&std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default());
+    let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some();
+    let xwayland = std::env::var_os("DISPLAY").is_some();
+    if wanted && gnome && wayland && xwayland && std::env::var_os("GDK_BACKEND").is_none() {
+        std::env::set_var("GDK_BACKEND", "x11");
+    }
+}
+
+/// `XDG_CURRENT_DESKTOP` is a colon-separated list, `ubuntu:GNOME` on Ubuntu.
+fn desktop_is_gnome(desktops: &str) -> bool {
+    desktops.split(':').any(|d| d.eq_ignore_ascii_case("GNOME"))
+}
+
+/// What GTK will pick: the first backend in `GDK_BACKEND`, else Wayland when
+/// a Wayland display exists, else X11.
+fn gdk_backend_is_x11() -> bool {
+    backend_is_x11(
+        std::env::var("GDK_BACKEND").ok().as_deref(),
+        std::env::var_os("WAYLAND_DISPLAY").is_some(),
+        std::env::var_os("DISPLAY").is_some(),
+    )
+}
+
+fn backend_is_x11(gdk_backend: Option<&str>, wayland: bool, x11: bool) -> bool {
+    match gdk_backend.map(str::trim) {
+        Some(list) if !list.is_empty() && list != "*" => {
+            list.split(',').next().map(str::trim) == Some("x11")
+        }
+        _ => !wayland && x11,
     }
 }
 
@@ -148,16 +200,87 @@ pub fn find_on_path(stem: &str) -> Option<PathBuf> {
 
 // ── Cursor ────────────────────────────────────────────────────────────────────
 
-/// Nothing polls the cursor here: the page reports it over the island, and the
-/// input region decides click-through (see the top of this file).
-pub const CURSOR_POLL: bool = false;
+/// Click-through is the input region, set to the island shape, never a
+/// per-tick decision from the cursor: under Xwayland the X server stops seeing
+/// the pointer once it is over a native Wayland window, so an island that
+/// ignored the mouse could never learn that the pointer came back. The page
+/// reports hover from its own mouse events (see the top of this file).
+pub const CLICK_THROUGH_BY_REGION: bool = true;
 
+/// Whether `cursor_physical` reads anything. On X11 it does, for Mochi's eyes
+/// only — and under Xwayland only while the pointer is over an X11 window.
+pub fn cursor_poll() -> bool {
+    X11.load(Ordering::Relaxed)
+}
+
+/// Cursor position in physical screen pixels, from X11.
 pub fn cursor_physical() -> Option<(f64, f64)> {
-    None
+    if !cursor_poll() {
+        return None;
+    }
+    xlib::pointer()
 }
 
 pub fn left_button_down() -> bool {
     false
+}
+
+/// The one Xlib call we need, on a connection of our own: GDK's belongs to the
+/// main thread and the cursor poll runs on another. libX11 is already loaded
+/// by GTK's X11 backend.
+mod xlib {
+    use std::os::raw::{c_char, c_int, c_uint, c_ulong, c_void};
+    use std::sync::Mutex;
+
+    type Display = c_void;
+    type Window = c_ulong;
+
+    #[link(name = "X11")]
+    extern "C" {
+        fn XOpenDisplay(name: *const c_char) -> *mut Display;
+        fn XDefaultRootWindow(display: *mut Display) -> Window;
+        fn XQueryPointer(
+            display: *mut Display,
+            w: Window,
+            root_return: *mut Window,
+            child_return: *mut Window,
+            root_x: *mut c_int,
+            root_y: *mut c_int,
+            win_x: *mut c_int,
+            win_y: *mut c_int,
+            mask: *mut c_uint,
+        ) -> c_int;
+    }
+
+    /// The connection, opened on first use. Xlib is not thread-safe without
+    /// XInitThreads, so every call goes through this lock. `Some(0)` means
+    /// opening failed and is not retried.
+    static DISPLAY: Mutex<Option<usize>> = Mutex::new(None);
+
+    pub fn pointer() -> Option<(f64, f64)> {
+        let mut guard = DISPLAY.lock().ok()?;
+        let display =
+            *guard.get_or_insert_with(|| unsafe { XOpenDisplay(std::ptr::null()) } as usize) as *mut Display;
+        if display.is_null() {
+            return None;
+        }
+        let (mut root, mut child): (Window, Window) = (0, 0);
+        let (mut x, mut y, mut wx, mut wy, mut mask) = (0, 0, 0, 0, 0);
+        let on_screen = unsafe {
+            XQueryPointer(
+                display,
+                XDefaultRootWindow(display),
+                &mut root,
+                &mut child,
+                &mut x,
+                &mut y,
+                &mut wx,
+                &mut wy,
+                &mut mask,
+            )
+        };
+        (on_screen != 0).then_some((x as f64, y as f64))
+    }
 }
 
 // ── Island window ─────────────────────────────────────────────────────────────
@@ -201,13 +324,52 @@ fn gtk_window_ptr(win: &gtk::ApplicationWindow) -> *mut gtk::ffi::GtkWindow {
 /// WebKitGTK has no competing drop target to remove.
 pub fn unblock_webview_drops(_app: &AppHandle) {}
 
+/// Last inset worked out on the main thread, for calls from anywhere else.
+static TOP_INSET: Mutex<i32> = Mutex::new(0);
+
+/// Physical pixels between the top of the monitor at `pos`/`size` and its work
+/// area. On X11 under GNOME that is the top bar: GNOME Shell draws it over
+/// every window, docks included, so an island at the very edge would sit
+/// beneath it, header and wake strip out of reach. TEMPORARY, like the
+/// Xwayland mode itself: the GNOME Shell extension will put the island over
+/// the bar. Zero everywhere else — a layer surface already sits over the panel.
+pub fn top_inset(pos: (i32, i32), size: (u32, u32)) -> i32 {
+    if !X11.load(Ordering::Relaxed) {
+        return 0;
+    }
+    // GDK belongs to the main thread.
+    if !gtk::is_initialized_main_thread() {
+        return *TOP_INSET.lock().unwrap();
+    }
+    let Some(display) = gtk::gdk::Display::default() else { return 0 };
+    let inset = (0..display.n_monitors())
+        .filter_map(|i| display.monitor(i))
+        .find_map(|m| {
+            let (g, sf) = (m.geometry(), m.scale_factor());
+            let same = (g.x() * sf, g.y() * sf) == pos
+                && (g.width() * sf, g.height() * sf) == (size.0 as i32, size.1 as i32);
+            same.then(|| work_area_top(g.y(), m.workarea().y(), g.height()) * sf)
+        })
+        .unwrap_or(0);
+    *TOP_INSET.lock().unwrap() = inset;
+    inset
+}
+
+/// How far the work area starts below the monitor's top, in GDK units; a
+/// nonsensical work area counts as none.
+fn work_area_top(monitor_y: i32, workarea_y: i32, monitor_h: i32) -> i32 {
+    let inset = workarea_y - monitor_y;
+    if (0..monitor_h / 4).contains(&inset) { inset } else { 0 }
+}
+
 /// Turns the island into an overlay surface on the top edge that never takes
 /// the keyboard. Must run before the window is first shown: a layer surface
 /// cannot be made out of a window the compositor already knows.
 ///
 /// Without layer-shell (GNOME, X11, or COUCOU_LAYER_SHELL=0) the window stays
-/// an ordinary always-on-top window that refuses focus; where it lands is then
-/// up to the window manager.
+/// an always-on-top window that refuses focus. On X11 it is a dock window,
+/// which window managers (Mutter included) place exactly where asked, top
+/// edge included; on Wayland where it lands is up to the compositor.
 pub fn make_non_activating(win: &WebviewWindow) {
     let Ok(gw) = win.gtk_window() else { return };
     // COUCOU_LAYER_SHELL=0 is the way out on a compositor where it misbehaves.
@@ -221,8 +383,15 @@ pub fn make_non_activating(win: &WebviewWindow) {
         } else {
             "compositor has no layer-shell"
         };
-        crate::log::line(format!("island is a regular window ({why})"));
         gw.set_accept_focus(false);
+        // A normal window is pushed below GNOME's top bar; a dock is not. The
+        // hint has to be set before the window is first mapped.
+        if X11.load(Ordering::Relaxed) && !gw.is_realized() {
+            gw.set_type_hint(gtk::gdk::WindowTypeHint::Dock);
+            crate::log::line(format!("island is an X11 dock window ({why})"));
+        } else {
+            crate::log::line(format!("island is a regular window ({why})"));
+        }
         return;
     }
     // tao gives undecorated Wayland windows an empty titlebar to force
@@ -303,6 +472,39 @@ fn apply_input_region(gw: &impl IsA<gtk::Widget>, rect: Region) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gnome_is_found_in_the_desktop_list() {
+        assert!(desktop_is_gnome("ubuntu:GNOME"));
+        assert!(desktop_is_gnome("GNOME"));
+        assert!(desktop_is_gnome("gnome-classic:GNOME"));
+        assert!(!desktop_is_gnome("KDE"));
+        assert!(!desktop_is_gnome("COSMIC"));
+        assert!(!desktop_is_gnome("Hyprland"));
+        assert!(!desktop_is_gnome(""));
+    }
+
+    #[test]
+    fn the_inset_is_the_top_bar_and_nothing_absurd() {
+        assert_eq!(work_area_top(0, 32, 1200), 32);
+        assert_eq!(work_area_top(1200, 1200, 1080), 0);
+        assert_eq!(work_area_top(1200, 1232, 1080), 32);
+        assert_eq!(work_area_top(0, -5, 1200), 0);
+        assert_eq!(work_area_top(0, 600, 1200), 0);
+    }
+
+    #[test]
+    fn the_first_gdk_backend_decides() {
+        assert!(backend_is_x11(Some("x11"), true, true));
+        assert!(backend_is_x11(Some("x11,wayland"), true, true));
+        assert!(!backend_is_x11(Some("wayland,x11"), true, true));
+        assert!(!backend_is_x11(Some("wayland"), false, true));
+        // Unset or "*": GTK prefers Wayland when there is one.
+        assert!(!backend_is_x11(None, true, true));
+        assert!(!backend_is_x11(Some("*"), true, true));
+        assert!(backend_is_x11(None, false, true));
+        assert!(!backend_is_x11(None, false, false));
+    }
 
     #[test]
     fn only_a_private_directory_of_ours_can_hold_the_relay_socket() {

@@ -166,12 +166,21 @@ What changes on Linux:
 
 - **The island** is a gtk-layer-shell overlay anchored to the top edge, over any
   top panel, on compositors that support it: COSMIC, KDE Plasma, Hyprland, Sway
-  and other wlroots compositors. GNOME has no layer-shell, so there the island
-  is a regular window. `COUCOU_LAYER_SHELL=0` forces that mode anywhere.
+  and other wlroots compositors. `COUCOU_LAYER_SHELL=0` forces a regular window
+  anywhere.
+- **GNOME** has no layer-shell. For now (a temporary measure until the GNOME
+  Shell extension) Coucou runs there through Xwayland, where the island is an
+  X11 dock window on the top edge, over the top bar. `COUCOU_X11=0` keeps
+  native Wayland, where the island is a regular window GNOME places below the
+  top bar; an explicit `GDK_BACKEND` always wins.
 - **Click-through** is the window's input region, kept equal to the island
-  shape, so the compositor sends every other click to what is underneath.
-- **Mochi's eyes** follow the pointer only while it is over the island: Wayland
-  gives no app the cursor position anywhere else.
+  shape, so the compositor sends every other click to what is underneath. The
+  app never hears of a click elsewhere, so instead of the Mac's click-outside
+  the overview, finished, error and note views fold 2 seconds after the
+  pointer leaves the island.
+- **Mochi's eyes** follow the pointer only while it is over the island on
+  Wayland: it gives no app the cursor position anywhere else. Through Xwayland
+  they follow it across the screen, but only while it is over an X11 window.
 - **Claude Code hooks** go through `~/.local/share/coucou/bin/coucou-hook` and a
   Unix socket at `$XDG_RUNTIME_DIR/coucou.sock`. Both ends check that the other
   runs as the same user.
@@ -181,3 +190,7 @@ What changes on Linux:
 - What the Windows build leaves out, this one does too: sending a file by
   email, dragging Mochi onto a window, and jumping to a specific terminal
   window — "Open terminal" opens the folder in VS Code.
+- Started from a terminal inside the snap version of VS Code, the app inherits
+  the snap's `GTK_PATH`, `GIO_MODULE_DIR`, `LOCPATH`… and crashes with a
+  `symbol lookup error` in `/snap/core20`. Start it from another terminal, or
+  unset those variables first.

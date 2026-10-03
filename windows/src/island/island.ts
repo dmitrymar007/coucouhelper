@@ -23,6 +23,20 @@ import { IslandStateMachine } from "./fsm";
 const BOT_OVERHANG = 40;
 /** Same margin as the Rust hit test (src-tauri/src/island.rs). */
 const HIT_MARGIN = 14;
+/**
+ * Linux: how long the island stays open once the pointer has left it. The Mac
+ * closes it on a click anywhere else; here those clicks go straight to the
+ * window underneath and the app never hears of them, so leaving is the closest
+ * signal there is. Only views the user merely glances at close this fast.
+ */
+const LEAVE_CLOSE_S = 2;
+const LEAVE_CLOSE_VIEWS: ReadonlySet<IslandViewName> = new Set([
+  "overview",
+  "empty",
+  "finished",
+  "error",
+  "note",
+]);
 
 /** The three views the drop sequence owns; leaving them stops the engine. */
 const UPLOAD_VIEWS: ReadonlySet<IslandViewName> = new Set(["upload", "uploading", "choose"]);
@@ -70,6 +84,9 @@ export class Island {
   private collapsed = false;
   private collapseTimer: number | null = null;
   private wasInIsland = false;
+  /** Set where the page tracks the cursor itself (Linux): see LEAVE_CLOSE_S. */
+  private closeOnLeave = false;
+  private leaveCloseTimer: number | null = null;
   /** Last shape handed to Rust for the click-through test. */
   private pushedRect = { x: -1, y: -1, w: -1, h: -1 };
   private homeCollapseAt: number | null = null;
@@ -563,6 +580,7 @@ export class Island {
    * reported as a cursor far away, which is what the poll would have said.
    */
   followPageCursor() {
+    this.closeOnLeave = true;
     window.addEventListener("mousemove", (e) => this.onCursor(e.clientX, e.clientY));
     window.addEventListener("mouseout", (e) => {
       if (e.relatedTarget == null) this.onCursor(-10_000, -10_000);
@@ -589,11 +607,13 @@ export class Island {
       if (this.fsm.state === "coucou") this.greeting.hover();
       this.fsm.mouseEntered();
       this.homeCollapseAt = null;
+      this.cancelLeaveClose();
     }
     if (!inIsland && this.wasInIsland) {
       this.fsm.mouseLeft();
       if (this.fsm.state === "home" && !State.isPinned) {
         this.homeCollapseAt = performance.now() + State.settings.autoCloseInterval * 1000;
+        if (this.closeOnLeave && LEAVE_CLOSE_VIEWS.has(State.view)) this.scheduleLeaveClose();
       }
     }
     this.wasInIsland = inIsland;
@@ -612,6 +632,40 @@ export class Island {
     }
 
     this.ensureRunning();
+  }
+
+  /**
+   * Cursor from the X11 poll (Linux on Xwayland), away from the island: it only
+   * steers Mochi's eyes. Hover stays with the page's own events, because under
+   * Xwayland the position goes stale as soon as the pointer is over a native
+   * Wayland window — a stale point next to the island must not reopen it.
+   */
+  onFarCursor(x: number, y: number) {
+    if (this.wasInIsland) return;
+    const rect = this.islandRect();
+    const nearIsland =
+      x >= rect.x - HIT_MARGIN && x <= rect.x + rect.w + HIT_MARGIN &&
+      y >= rect.y - HIT_MARGIN && y <= rect.y + rect.h + HIT_MARGIN;
+    if (nearIsland) return;
+    State.mouse = { x, y };
+    this.ensureRunning();
+  }
+
+  private scheduleLeaveClose() {
+    this.cancelLeaveClose();
+    this.homeCollapseAt = performance.now() + LEAVE_CLOSE_S * 1000;
+    this.leaveCloseTimer = window.setTimeout(() => {
+      this.leaveCloseTimer = null;
+      if (this.wasInIsland || State.isPinned || State.mode !== "expanded") return;
+      if (!LEAVE_CLOSE_VIEWS.has(State.view)) return;
+      this.collapse();
+    }, LEAVE_CLOSE_S * 1000);
+  }
+
+  private cancelLeaveClose() {
+    if (this.leaveCloseTimer == null) return;
+    window.clearTimeout(this.leaveCloseTimer);
+    this.leaveCloseTimer = null;
   }
 
   private isBotHit(x: number, y: number): boolean {

@@ -161,7 +161,7 @@ pub fn apply_geometry(app: &AppHandle, pref: &str, collapsed: bool) {
     let pw = (lw * scale).round().max(1.0) as u32;
     let ph = (lh * scale).round().max(1.0) as u32;
     let x = mp.x + (ms.width as i32 - pw as i32) / 2;
-    let y = mp.y;
+    let y = mp.y + platform::top_inset((mp.x, mp.y), (ms.width, ms.height));
 
     // GTK never sizes a non-resizable window below its natural size (200 px
     // here), so on Linux the 6 px wake strip would stay a 200 px block. tao
@@ -198,10 +198,10 @@ pub fn spawn_cursor_poll(app: AppHandle, gate: Arc<PollGate>) {
         // Remembered across wakes so a display change while hidden is noticed the
         // moment the island comes back.
         let mut last_screen: Option<(i32, i32, u32, u32, u64)> = None;
-        // Without a cursor to read (Linux) the loop only watches the display
+        // Without a cursor to read (Wayland) the loop only watches the display
         // layout, and twice a second is plenty for that: waking at 60 Hz just to
         // find no cursor costs CPU for nothing.
-        let (period, screen_every) = if platform::CURSOR_POLL { (16, 30) } else { (500, 1) };
+        let (period, screen_every) = if platform::cursor_poll() { (16, 30) } else { (500, 1) };
         loop {
             gate.wait_until_active();
             let mut last = (f64::MIN, f64::MIN);
@@ -240,6 +240,14 @@ pub fn spawn_cursor_poll(app: AppHandle, gate: Arc<PollGate>) {
                     continue;
                 }
                 last = (x, y);
+
+                // Linux: the input region is the click-through and the page tracks
+                // hover from its own mouse events, so the poll only tells Mochi's
+                // eyes where the pointer is away from the island.
+                if platform::CLICK_THROUGH_BY_REGION {
+                    let _ = win.emit("cursor-far", CursorPayload { x, y });
+                    continue;
+                }
 
                 // Click-through: the window only takes the mouse over the island
                 // shape. A small entry margin means the flag is already off by the
@@ -288,10 +296,10 @@ pub fn spawn_cursor_poll(app: AppHandle, gate: Arc<PollGate>) {
 /// Re-applies click-through after the window or the island changed shape.
 ///
 /// With the cursor poll (Windows) the window takes the mouse again and the next
-/// tick decides from the cursor. Without it (Linux) the input region is set to
-/// the island itself, or to the whole wake strip while collapsed.
+/// tick decides from the cursor. On Linux the input region is set to the
+/// island itself, or to the whole wake strip while collapsed.
 pub fn refresh_click_through(app: &AppHandle, gate: &PollGate) {
-    if platform::CURSOR_POLL {
+    if !platform::CLICK_THROUGH_BY_REGION {
         set_ignore_cursor(app, false);
         gate.forget_ignore_state();
         return;

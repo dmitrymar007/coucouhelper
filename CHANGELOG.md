@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased (coucouhelper, Linux)
+
+- GNOME on Wayland (temporary, until the GNOME Shell extension): Coucou runs through Xwayland, where the island is a dock window right on the top edge, over the top bar, instead of a window GNOME drops below it. `COUCOU_X11=0` keeps native Wayland.
+- Linux: Mochi's eyes follow the pointer outside the island too, wherever X11 can see it.
+- Linux: the island folds 2 seconds after the pointer leaves it on the overview, finished, error and note views — the closest thing to the Mac's click-outside, which Linux never reports to the app.
+
 ## 0.1.2 — October 2, 2026
 
 - Codex support (GitHub build): sessions show up live on the Codex pill, and permission requests get Allow and Deny in the notch. Install from Settings → Codex Hooks, then trust the hooks once with /hooks in Codex (#130) — thanks @lacatu5

@@ -39,8 +39,8 @@ pub struct BootInfo {
     screen: ScreenInfo,
     version: String,
     hook_path: String,
-    /// False where the OS has no global cursor (Wayland): the page then reports
-    /// the cursor from its own mouse events.
+    /// False where click-through is the input region (Linux): the page then
+    /// tracks hover from its own mouse events.
     cursor_poll: bool,
 }
 
@@ -55,7 +55,7 @@ fn boot(app: AppHandle, shared: State<Shared>) -> BootInfo {
         screen,
         version: env!("CARGO_PKG_VERSION").to_string(),
         hook_path: settings::hook_exe_path().to_string_lossy().to_string(),
-        cursor_poll: platform::CURSOR_POLL,
+        cursor_poll: !platform::CLICK_THROUGH_BY_REGION,
     }
 }
 
@@ -103,7 +103,7 @@ fn set_collapsed(app: AppHandle, shared: State<Shared>, collapsed: bool) {
 fn set_island_rect(app: AppHandle, shared: State<Shared>, x: f64, y: f64, width: f64, height: f64) {
     shared.gate.set_rect(island::IslandRect { x, y, w: width, h: height });
     // Without the cursor poll the input region is the click-through: it follows the island.
-    if !platform::CURSOR_POLL {
+    if platform::CLICK_THROUGH_BY_REGION {
         island::refresh_click_through(&app, &shared.gate);
     }
 }
@@ -416,7 +416,7 @@ pub fn run() {
             gate.collapsed.store(false, Ordering::Relaxed);
             // Nothing drawn yet, so nothing takes the mouse until the page
             // reports the island's shape.
-            if !platform::CURSOR_POLL {
+            if platform::CLICK_THROUGH_BY_REGION {
                 island::refresh_click_through(&handle, &gate);
             }
             gate.set_active(true);
