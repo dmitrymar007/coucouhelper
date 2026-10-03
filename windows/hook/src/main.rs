@@ -45,6 +45,11 @@ mod unix;
 use unix::connect;
 
 fn main() {
+    // Coucou's own chat runs Claude Code with hooks off; should they fire
+    // anyway, the island must not report its own chat as a session.
+    if std::env::var_os("COUCOU_CHAT").is_some() {
+        std::process::exit(0);
+    }
     let Some((payload, event)) = read_event() else { std::process::exit(0) };
 
     let waits_for_answer = event == "PermissionRequest";

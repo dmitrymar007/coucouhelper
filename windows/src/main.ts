@@ -27,6 +27,18 @@ async function main() {
   await onEvent<{ x: number; y: number }>("cursor", ({ x, y }) => island.onCursor(x, y));
   await onEvent<{ x: number; y: number }>("cursor-far", ({ x, y }) => island.onFarCursor(x, y));
 
+  // Settings → Continue last chat: the conversation comes back into the island.
+  await onEvent<{ role: "user" | "assistant"; content: string }[]>("chat-restored", (messages) => {
+    State.chatHistory = messages.map((m, i) => ({ id: 1_000_000 + i, role: m.role, content: m.content }));
+    State.droppedFile = null;
+    island.alert("prompt");
+  });
+  // The chat backend changed: the new one starts a new conversation.
+  await onEvent<null>("chat-cleared", () => {
+    State.chatHistory = [];
+    State.notify();
+  });
+
   /** Pause has to reach Rust too, or the pollers keep calling out. */
   const setPaused = (on: boolean) => {
     if (State.paused === on) return;

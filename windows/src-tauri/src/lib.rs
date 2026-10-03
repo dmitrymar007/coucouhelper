@@ -1,6 +1,8 @@
 // Coucou for Windows — app wiring and the commands the island calls.
 
+mod chat;
 mod claude;
+mod claude_cli;
 mod files;
 mod hooks;
 mod integrations;
@@ -20,7 +22,8 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_autostart::{ManagerExt, MacosLauncher};
 
-use claude::{Chat, ChatContext, ChatReply};
+use chat::Chat;
+use claude::{ChatContext, ChatReply};
 use files::DroppedFile;
 use hooks::{HookPreview, HookStatus};
 use island::{PollGate, ScreenInfo};
@@ -60,14 +63,22 @@ fn boot(app: AppHandle, shared: State<Shared>) -> BootInfo {
 }
 
 #[tauri::command]
-fn save_settings(app: AppHandle, shared: State<Shared>, settings: Settings) {
-    let (screen_changed, autostart_changed) = {
+fn save_settings(app: AppHandle, shared: State<Shared>, chat: State<Chat>, mut settings: Settings) {
+    let (screen_changed, autostart_changed, backend_changed) = {
         let mut current = shared.settings.lock().unwrap();
         let screen_changed = current.screen != settings.screen;
         let autostart_changed = current.autostart != settings.autostart;
+        let backend_changed = current.chat_backend != settings.chat_backend;
+        // Rust keeps this one up to date; a window's copy of it may be stale.
+        settings.last_chat_session = current.last_chat_session.clone();
         *current = settings.clone();
-        (screen_changed, autostart_changed)
+        (screen_changed, autostart_changed, backend_changed)
     };
+    // The other backend knows nothing of this conversation: start a new one.
+    if backend_changed {
+        chat.reset();
+        let _ = app.emit_to(island::WINDOW_LABEL, "chat-cleared", ());
+    }
     if let Err(err) = settings::save(&settings) {
         eprintln!("[coucou] could not save settings: {err}");
     }
@@ -233,21 +244,81 @@ fn approval_decline(app: AppHandle, request_id: String) {
 
 // ── Chat, files and secrets ───────────────────────────────────────────────────
 
-/// One chat turn. The API key and any file bytes stay on the Rust side.
+/// One chat turn. The API key and any file bytes stay on the Rust side; the
+/// answer streams to the island as `chat-stream` events while it comes.
 #[tauri::command]
 async fn chat_send(
+    app: AppHandle,
     shared: State<'_, Shared>,
     chat: State<'_, Chat>,
     query: String,
     context: Option<ChatContext>,
 ) -> Result<ChatReply, String> {
-    let model = shared.settings.lock().unwrap().model.clone();
-    claude::send(&chat, &model, query, context).await
+    let turn = chat::TurnSettings::from(&*shared.settings.lock().unwrap());
+    let stream = app.clone();
+    let sent = chat
+        .send(turn, query, context, move |update| {
+            let _ = stream.emit_to(island::WINDOW_LABEL, "chat-stream", update);
+        })
+        .await?;
+    if let Some(session) = sent.session {
+        remember_chat_session(&app, &shared, Some(session));
+    }
+    Ok(sent.reply)
+}
+
+/// Stores the conversation to offer again after a restart, and tells the
+/// settings window.
+fn remember_chat_session(app: &AppHandle, shared: &Shared, session: Option<String>) {
+    let updated = {
+        let mut current = shared.settings.lock().unwrap();
+        if current.last_chat_session == session {
+            return;
+        }
+        current.last_chat_session = session;
+        let _ = settings::save(&current);
+        current.clone()
+    };
+    let _ = app.emit("settings-changed", updated);
 }
 
 #[tauri::command]
 fn chat_reset(chat: State<Chat>) {
     chat.reset();
+}
+
+/// Settings → Stop now, and the tray: the next message starts it again.
+#[tauri::command]
+fn chat_stop(chat: State<Chat>) {
+    chat.stop();
+}
+
+#[tauri::command]
+fn chat_status(chat: State<Chat>) -> claude_cli::CliStatus {
+    chat.status()
+}
+
+/// Is `claude` installed and signed in? Asked by the settings window.
+#[tauri::command]
+async fn chat_install() -> claude_cli::Install {
+    chat::install_status().await
+}
+
+/// Settings → Continue last chat: the island gets the conversation back and
+/// the next message resumes it.
+#[tauri::command]
+fn chat_resume_last(app: AppHandle, shared: State<Shared>, chat: State<Chat>) -> Result<usize, String> {
+    let session = shared
+        .settings
+        .lock()
+        .unwrap()
+        .last_chat_session
+        .clone()
+        .ok_or("No saved conversation yet.")?;
+    let messages = chat.resume(&session)?;
+    let count = messages.len();
+    let _ = app.emit_to(island::WINDOW_LABEL, "chat-restored", messages);
+    Ok(count)
 }
 
 /// Copies a dropped file into the inbox and reports its name back.
@@ -393,6 +464,10 @@ pub fn run() {
             log_line,
             chat_send,
             chat_reset,
+            chat_stop,
+            chat_status,
+            chat_install,
+            chat_resume_last,
             ingest_file,
             secret_present,
             secret_set,

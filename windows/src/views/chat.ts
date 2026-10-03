@@ -3,7 +3,7 @@
 
 import { h, svg, clear } from "./dom";
 import { ICONS } from "./icons";
-import { Bridge, type ChatContext } from "../core/bridge";
+import { Bridge, onEvent, type ChatContext, type ChatStreamUpdate } from "../core/bridge";
 import { Sound } from "../core/sound";
 import { State, type ChatMessage } from "../core/state";
 import type { ViewHost } from "./views";
@@ -56,7 +56,26 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
   (el.querySelector(".card") as HTMLElement).style.setProperty("--wash", "rgba(99,102,241,0.5)");
 
   let sending = false;
-  let renderedCount = -1;
+  let renderedKey = "";
+  /** The answer being streamed in, once its first words have arrived. */
+  let streaming: ChatMessage | null = null;
+
+  // Claude Code streams the answer; the API sends it whole, so this never
+  // fires for it and the typing dots stay until the reply lands.
+  void onEvent<ChatStreamUpdate>("chat-stream", (update) => {
+    if (!sending) return;
+    if (update.kind === "tool") {
+      State.stateOverride = "searching";
+    } else {
+      if (!streaming) {
+        streaming = { id: nextId++, role: "assistant", content: "" };
+        State.chatHistory.push(streaming);
+      }
+      streaming.content += update.text;
+    }
+    State.notify();
+    onHeightChange();
+  });
 
   async function submit() {
     const query = input.value.trim();
@@ -74,17 +93,23 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
     const context: ChatContext | null =
       State.chatHistory.length === 1 && file ? { kind: "file", name: file.name, path: file.path } : null;
 
+    streaming = null;
     try {
       const reply = await Bridge.chatSend(query, context);
-      State.chatHistory.push({ id: nextId++, role: "assistant", content: reply.text });
+      if (streaming) (streaming as ChatMessage).content = reply.text;
+      else State.chatHistory.push({ id: nextId++, role: "assistant", content: reply.text });
       State.stateOverride = null;
       Sound.play("finish");
     } catch (err) {
+      // A half-streamed answer is not an answer.
+      const partial = streaming;
+      if (partial) State.chatHistory = State.chatHistory.filter((m) => m !== partial);
       State.stateOverride = null;
       State.noteMessage = String(err).replace(/^Error:\s*/, "");
       State.view = "note";
       Sound.play("error");
     } finally {
+      streaming = null;
       sending = false;
       State.notify();
       onHeightChange();
@@ -112,13 +137,15 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
         if (wantChip) chipRow.append(contextChip(wantChip));
       }
 
-      const thinking = State.stateOverride === "thinking";
-      const count = State.chatHistory.length + (thinking ? 0.5 : 0);
-      if (count !== renderedCount) {
-        renderedCount = count;
+      const waiting =
+        (State.stateOverride === "thinking" || State.stateOverride === "searching") && !streaming;
+      const last = State.chatHistory[State.chatHistory.length - 1];
+      const key = `${State.chatHistory.length}:${waiting}:${last?.id ?? 0}:${last?.content.length ?? 0}`;
+      if (key !== renderedKey) {
+        renderedKey = key;
         clear(log);
         for (const m of State.chatHistory) log.append(bubble(m));
-        if (thinking) log.append(typingDots());
+        if (waiting) log.append(typingDots());
         log.scrollTop = log.scrollHeight;
       }
 

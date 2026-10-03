@@ -20,10 +20,35 @@ pub struct Settings {
     /// Defaulted explicitly so a settings.json written by an older build still loads.
     #[serde(default = "default_model")]
     pub model: String,
+    /// Who answers the chat: "claude-code" (the user's subscription, through
+    /// the `claude` CLI) or "api-key".
+    #[serde(default = "default_chat_backend")]
+    pub chat_backend: String,
+    /// Model alias handed to Claude Code: "sonnet", "opus", "haiku"…
+    #[serde(default = "default_cli_model")]
+    pub cli_model: String,
+    /// Minutes without a message before the Claude Code process stops; 0 never.
+    #[serde(default = "default_chat_idle_minutes")]
+    pub chat_idle_minutes: u32,
+    /// Last Claude Code chat session, so it can be picked up after a restart.
+    #[serde(default)]
+    pub last_chat_session: Option<String>,
 }
 
 fn default_model() -> String {
     crate::claude::DEFAULT_MODEL.to_string()
+}
+
+fn default_chat_backend() -> String {
+    crate::chat::BACKEND_CLAUDE_CODE.to_string()
+}
+
+fn default_cli_model() -> String {
+    crate::claude_cli::DEFAULT_MODEL.to_string()
+}
+
+fn default_chat_idle_minutes() -> u32 {
+    30
 }
 
 impl Default for Settings {
@@ -43,6 +68,10 @@ impl Default for Settings {
             autostart: false,
             hooks_installed: false,
             model: default_model(),
+            chat_backend: default_chat_backend(),
+            cli_model: default_cli_model(),
+            chat_idle_minutes: default_chat_idle_minutes(),
+            last_chat_session: None,
         }
     }
 }

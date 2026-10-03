@@ -85,6 +85,13 @@ export const Bridge = {
   chatSend: (query: string, context: ChatContext | null) =>
     callOrThrow<{ text: string }>("chat_send", { query, context }),
   chatReset: () => call<void>("chat_reset"),
+  /** Ends the Claude Code process; the next message starts it again. */
+  chatStop: () => call<void>("chat_stop"),
+  chatStatus: () => call<ChatStatus>("chat_status"),
+  /** Whether `claude` is installed and signed in. */
+  chatInstall: () => call<ClaudeInstall>("chat_install"),
+  /** Hands the last Claude Code conversation back to the island. */
+  chatResumeLast: () => callOrThrow<number>("chat_resume_last"),
   /** Copies a dropped file into the inbox. */
   ingestFile: (path: string) => callOrThrow<DroppedFile>("ingest_file", { path }),
   /** Only ever tells you whether a key exists — never its value. */
@@ -106,6 +113,20 @@ export interface IntegrationUpdate {
   data: Record<string, unknown>;
   error: string | null;
   event: { success: boolean; label: string; detail: string | null } | null;
+}
+
+/** A piece of the answer while it is still coming (Claude Code chat). */
+export type ChatStreamUpdate = { kind: "text"; text: string } | { kind: "tool"; name: string };
+
+export interface ChatStatus {
+  running: boolean;
+  sessionId: string | null;
+}
+
+export interface ClaudeInstall {
+  path: string | null;
+  loggedIn: boolean;
+  authMethod: string | null;
 }
 
 export type ChatContext =
@@ -142,6 +163,9 @@ async function callOrThrow<T>(cmd: string, args?: Record<string, unknown>): Prom
 export type BridgeEvent =
   | { name: "cursor"; payload: { x: number; y: number } }
   | { name: "cursor-far"; payload: { x: number; y: number } }
+  | { name: "chat-stream"; payload: ChatStreamUpdate }
+  | { name: "chat-restored"; payload: { role: "user" | "assistant"; content: string }[] }
+  | { name: "chat-cleared"; payload: null }
   | { name: "tray"; payload: string }
   | { name: "hook"; payload: Record<string, unknown> }
   | { name: "screen-changed"; payload: null };

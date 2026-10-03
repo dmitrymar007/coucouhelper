@@ -90,8 +90,16 @@ export interface Settings {
   screen: "primary" | "cursor";
   autostart: boolean;
   hooksInstalled: boolean;
-  /** Claude model used by the chat. */
+  /** Claude model used by the chat with an API key. */
   model: string;
+  /** "claude-code" (subscription, through the claude CLI) or "api-key". */
+  chatBackend: string;
+  /** Model alias for Claude Code: "sonnet", "opus", "haiku". */
+  cliModel: string;
+  /** Minutes before an idle Claude Code process stops; 0 = never. */
+  chatIdleMinutes: number;
+  /** Owned by Rust: the conversation "Continue last chat" picks up. */
+  lastChatSession: string | null;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -106,6 +114,10 @@ export const DEFAULT_SETTINGS: Settings = {
   autostart: false,
   hooksInstalled: false,
   model: "claude-opus-5",
+  chatBackend: "claude-code",
+  cliModel: "sonnet",
+  chatIdleMinutes: 30,
+  lastChatSession: null,
 };
 
 type Listener = () => void;

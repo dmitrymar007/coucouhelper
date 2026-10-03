@@ -70,6 +70,17 @@ It works from any terminal — Windows Terminal, PowerShell, VS Code, Git Bash.
 
 ## Chat and keys
 
+By default the chat answers through **Claude Code on your own subscription**:
+install `claude`, sign in once with `claude auth login`, and **Settings… →
+Chat** shows it as ready. Your first message starts a hidden `claude -p`
+process that stays up so the next answers come fast; it can search the web,
+read pages and read the file you dropped, and nothing else — no edits, no
+commands, no MCP servers, no hooks. It stops after the idle time you pick,
+from **Stop now** or the tray's **Stop chat**, and with Coucou. Claude Code
+keeps the conversations in `~/.claude/projects/`, and **Continue last chat**
+brings the last one back into the island.
+
+The other backend, **Anthropic API key**, works as before:
 **Settings… → Claude** takes your Anthropic API key. Keys live in the **Windows
 Credential Manager**, never on disk and never in the interface — the island can
 only ask whether a key exists. Same for every integration key.

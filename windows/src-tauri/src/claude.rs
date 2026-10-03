@@ -22,7 +22,7 @@ const MAX_INLINE_TEXT: u64 = 200_000;
 
 pub const DEFAULT_MODEL: &str = "claude-opus-5";
 
-const SYSTEM_PROMPT: &str = "You are Mochi, a personal AI assistant living at the top of the user's screen. \
+pub(crate) const SYSTEM_PROMPT: &str = "You are Mochi, a personal AI assistant living at the top of the user's screen. \
 You have web search access and can help with absolutely anything — research, coding, finding places, recommendations, tasks, questions. \
 Respond in the user's language. Be thorough and complete — use as much detail as the task requires. \
 No markdown formatting (no **, no ##, no bullet dashes). Use plain text with line breaks.";
@@ -84,22 +84,7 @@ pub async fn send(
     // File / window context rides along with the first message only, exactly
     // like ClaudeService.chat().
     if chat.is_empty() {
-        match &context {
-            Some(ChatContext::File { name, path }) => {
-                if let Some(block) = file_block(path) {
-                    content.push(block);
-                }
-                content.push(json!({ "type": "text", "text": format!("File: {name}") }));
-            }
-            Some(ChatContext::Window { app_name, title, url }) => {
-                let mut text = format!("Context — App: {app_name}, Window: {title}");
-                if let Some(url) = url {
-                    text.push_str(&format!(", URL: {url}"));
-                }
-                content.push(json!({ "type": "text", "text": text }));
-            }
-            None => {}
-        }
+        content.extend(context_blocks(context.as_ref()));
     }
     content.push(json!({ "type": "text", "text": query }));
 
@@ -155,6 +140,29 @@ pub async fn send(
         return Err("No response text.".into());
     }
     Ok(ChatReply { text })
+}
+
+/// The blocks that tell Claude what the conversation is about: a dropped file
+/// or the window the user was in. Shared with the Claude Code chat.
+pub(crate) fn context_blocks(context: Option<&ChatContext>) -> Vec<Value> {
+    let mut content = Vec::new();
+    match context {
+        Some(ChatContext::File { name, path }) => {
+            if let Some(block) = file_block(path) {
+                content.push(block);
+            }
+            content.push(json!({ "type": "text", "text": format!("File: {name}") }));
+        }
+        Some(ChatContext::Window { app_name, title, url }) => {
+            let mut text = format!("Context — App: {app_name}, Window: {title}");
+            if let Some(url) = url {
+                text.push_str(&format!(", URL: {url}"));
+            }
+            content.push(json!({ "type": "text", "text": text }));
+        }
+        None => {}
+    }
+    content
 }
 
 async fn call(key: &str, body: &Value) -> Result<Value, String> {

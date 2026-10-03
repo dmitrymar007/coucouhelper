@@ -171,6 +171,140 @@ function claudeSection(status: HookStatus): HTMLElement {
   return section;
 }
 
+// ── Chat section ──────────────────────────────────────────────────────────────
+
+const CLI_MODELS: [string, string][] = [
+  ["sonnet", "Claude Sonnet"],
+  ["opus", "Claude Opus"],
+  ["haiku", "Claude Haiku"],
+];
+
+const IDLE_CHOICES: [number, string][] = [
+  [10, "after 10 minutes idle"],
+  [30, "after 30 minutes idle"],
+  [60, "after an hour idle"],
+  [0, "only when Coucou quits"],
+];
+
+/** Who answers the island's chat: Claude Code on the user's subscription, or an API key. */
+function chatSection(): HTMLElement {
+  const dot = statusDot(false);
+  const install = h("span", { class: "hint", text: "Looking for Claude Code…" });
+
+  const backend = h("select", {}) as HTMLSelectElement;
+  backend.append(
+    h("option", { value: "claude-code", text: "Claude Code (your subscription)" }),
+    h("option", { value: "api-key", text: "Anthropic API key" }),
+  );
+  backend.value = settings.chatBackend;
+
+  const model = h("select", {}) as HTMLSelectElement;
+  for (const [id, label] of CLI_MODELS) model.append(h("option", { value: id, text: label }));
+  if (!CLI_MODELS.some(([id]) => id === settings.cliModel)) {
+    model.append(h("option", { value: settings.cliModel, text: settings.cliModel }));
+  }
+  model.value = settings.cliModel;
+  model.addEventListener("change", () => {
+    settings.cliModel = model.value;
+    void save();
+  });
+
+  const idle = h("select", {}) as HTMLSelectElement;
+  for (const [min, label] of IDLE_CHOICES) idle.append(h("option", { value: String(min), text: label }));
+  idle.value = String(settings.chatIdleMinutes);
+  if (idle.value === "") idle.value = "30";
+  idle.addEventListener("change", () => {
+    settings.chatIdleMinutes = Number(idle.value);
+    void save();
+  });
+
+  const running = h("span", { class: "hint", text: "" });
+  const stopBtn = h("button", { text: "Stop now" });
+  const resumeBtn = h("button", { text: "Continue last chat" });
+  const feedback = h("div", {});
+
+  const cliRows = [
+    h("div", { class: "row" }, h("label", { text: "Model" }), model),
+    h("div", { class: "row" }, h("label", { text: "Stop Claude Code" }), idle),
+    h("div", { class: "row" }, h("label", { text: "Chat process" }), running, stopBtn),
+    h("div", { class: "row" }, h("label", { text: "History" }), resumeBtn),
+    h("div", {
+      class: "hint",
+      text:
+        "The chat runs Claude Code in the background with web search, web pages and file reading only: " +
+        "no edits, no commands, no MCP servers, no hooks. It starts with your first message and keeps " +
+        "running so the next answers come quickly. Conversations are saved by Claude Code in ~/.claude/projects.",
+    }),
+  ];
+
+  async function refreshStatus() {
+    const status = await Bridge.chatStatus();
+    running.textContent = status?.running ? "running" : "stopped";
+    stopBtn.toggleAttribute("disabled", !status?.running);
+    resumeBtn.toggleAttribute("disabled", !settings.lastChatSession);
+  }
+
+  async function refreshInstall() {
+    const info = await Bridge.chatInstall();
+    const ok = !!info?.path && info.loggedIn;
+    dot.style.background = ok ? "#22c55e" : "#f4505e";
+    if (!info?.path) {
+      install.textContent = "Claude Code is not installed: `claude` was not found on your PATH.";
+    } else if (!info.loggedIn) {
+      install.textContent = `Found ${info.path}, but not signed in. Run \`claude auth login\` in a terminal.`;
+    } else {
+      const how = info.authMethod === "claude.ai" ? "your Claude subscription" : (info.authMethod ?? "Claude Code");
+      install.textContent = `Signed in to ${how} — ${info.path}`;
+    }
+  }
+
+  function draw() {
+    const cli = backend.value === "claude-code";
+    install.style.display = cli ? "" : "none";
+    for (const row of cliRows) row.style.display = cli ? "" : "none";
+    if (!cli) dot.style.background = "#22c55e";
+    else void refreshInstall();
+  }
+
+  backend.addEventListener("change", () => {
+    settings.chatBackend = backend.value;
+    void save();
+    draw();
+  });
+
+  stopBtn.addEventListener("click", async () => {
+    await Bridge.chatStop();
+    await refreshStatus();
+  });
+
+  resumeBtn.addEventListener("click", async () => {
+    clear(feedback);
+    try {
+      const count = await Bridge.chatResumeLast();
+      feedback.append(h("div", { class: "notice ok", text: `${count} messages are back in the island's chat.` }));
+    } catch (err) {
+      feedback.append(h("div", { class: "notice err", text: String(err).replace(/^Error:\s*/, "") }));
+    }
+  });
+
+  draw();
+  void refreshStatus();
+  // Running or not changes behind our back: first message, idle stop, tray.
+  window.setInterval(() => {
+    if (document.visibilityState === "visible") void refreshStatus();
+  }, 3000);
+
+  return h(
+    "section",
+    {},
+    h("h2", {}, dot, h("span", { text: "Chat" })),
+    install,
+    h("div", { class: "row" }, h("label", { text: "Answers from" }), backend),
+    ...cliRows,
+    feedback,
+  );
+}
+
 // ── Claude API section ────────────────────────────────────────────────────────
 
 const MODELS: [string, string][] = [
@@ -442,6 +576,7 @@ async function main() {
   root.append(
     h("h1", {}, h("span", { text: "Coucou" }), h("span", { class: "version", text: version })),
     claudeSection(status),
+    chatSection(),
     apiSection(hasKey),
     integrationsSection(present),
     generalSection(),
