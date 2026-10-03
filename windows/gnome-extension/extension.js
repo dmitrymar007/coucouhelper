@@ -39,10 +39,17 @@ const BUTTONS =
     Clutter.ModifierType.BUTTON2_MASK |
     Clutter.ModifierType.BUTTON3_MASK;
 
-/** Development only: a stage screenshot, to check the island without eyes. */
+/** Coucou's executable is called this in every build: deb, rpm, AppImage, cargo. */
+const APP_EXECUTABLE = 'coucou';
+
+/**
+ * Development only: debug.js (screenshots, synthetic clicks) is loaded when
+ * GNOME Shell runs with COUCOU_EXT_DEBUG=1 and the file is there — the app
+ * never installs it.
+ */
 const DEBUG = GLib.getenv('COUCOU_EXT_DEBUG') === '1';
 
-const IFACE = `<node>
+const iface = (extraMethods = '') => `<node>
   <interface name="${IFACE_NAME}">
     <method name="Register">
       <arg type="s" name="title" direction="in"/>
@@ -63,15 +70,7 @@ const IFACE = `<node>
       <arg type="d" name="y"/>
       <arg type="b" name="pressed"/>
     </signal>
-    ${DEBUG ? `<method name="Screenshot">
-      <arg type="s" name="path" direction="in"/>
-      <arg type="s" name="report" direction="out"/>
-    </method>
-    <method name="Click">
-      <arg type="d" name="x" direction="in"/>
-      <arg type="d" name="y" direction="in"/>
-      <arg type="s" name="report" direction="out"/>
-    </method>` : ''}
+    ${extraMethods}
   </interface>
 </node>`;
 
@@ -82,6 +81,16 @@ async function senderPid(sender) {
         'GetConnectionUnixProcessID', new GLib.Variant('(s)', [sender]),
         new GLib.VariantType('(u)'), Gio.DBusCallFlags.NONE, -1, null);
     return reply.deepUnpack()[0];
+}
+
+/** File name of a process's executable, or null when it cannot be read. */
+function executableName(pid) {
+    try {
+        const path = GLib.file_read_link(`/proc/${pid}/exe`);
+        return GLib.path_get_basename(path).replace(/ \(deleted\)$/, '');
+    } catch {
+        return null;
+    }
 }
 
 /** The one island being looked after, and the app that owns it. */
@@ -153,7 +162,7 @@ class Island {
     /** Over the top bar: the window's actor goes to the layer above chrome. */
     _raise() {
         const actor = this._window?.get_compositor_private();
-        if (!actor || (DEBUG && GLib.getenv('COUCOU_EXT_NORAISE') === '1'))
+        if (!actor)
             return;
         const parent = actor.get_parent();
         if (parent === global.top_window_group)
@@ -194,10 +203,6 @@ class Island {
 
     /** A move we did not make (Mutter's constraints, a stray drag): undo it. */
     _placeLater() {
-        if (DEBUG) {
-            const r = this._window?.get_frame_rect();
-            log(`coucou: moved to ${r?.x},${r?.y} ${r?.width}x${r?.height}`);
-        }
         if (this._placeSource)
             return;
         this._placeSource = GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
@@ -288,19 +293,22 @@ class Island {
 
 export default class CoucouIslandExtension extends Extension {
     enable() {
+        this._enabled = true;
         this._island = null;
         this._patches = [];
         this._hideFromShell();
-
-        this._dbus = Gio.DBusExportedObject.wrapJSObject(IFACE, this);
-        this._dbus.export(Gio.DBus.session, OBJECT_PATH);
-        this._nameId = Gio.bus_own_name_on_connection(
-            Gio.DBus.session, BUS_NAME, Gio.BusNameOwnerFlags.NONE, null, null);
+        if (DEBUG)
+            this._exportWithDebug();
+        else
+            this._export();
     }
 
     disable() {
-        Gio.bus_unown_name(this._nameId);
-        this._dbus.unexport();
+        this._enabled = false;
+        if (this._nameId)
+            Gio.bus_unown_name(this._nameId);
+        this._nameId = 0;
+        this._dbus?.unexport();
         this._dbus = null;
         this._island?.destroy();
         this._island = null;
@@ -310,6 +318,31 @@ export default class CoucouIslandExtension extends Extension {
     }
 
     // ── D-Bus ────────────────────────────────────────────────────────────────
+
+    _export(extraMethods = '') {
+        this._dbus = Gio.DBusExportedObject.wrapJSObject(iface(extraMethods), this);
+        this._dbus.export(Gio.DBus.session, OBJECT_PATH);
+        this._nameId = Gio.bus_own_name_on_connection(
+            Gio.DBus.session, BUS_NAME, Gio.BusNameOwnerFlags.NONE, null, null);
+    }
+
+    async _exportWithDebug() {
+        let methods = '';
+        try {
+            const debug = await import('./debug.js');
+            debug.install(this);
+            methods = debug.METHODS;
+        } catch (e) {
+            log(`coucou: no debug helpers (${e.message})`);
+        }
+        if (this._enabled)
+            this._export(methods);
+    }
+
+    /** The island currently looked after, for the debug helpers. */
+    get island() {
+        return this._island;
+    }
 
     get Protocol() {
         return PROTOCOL;
@@ -321,6 +354,14 @@ export default class CoucouIslandExtension extends Extension {
             // The window is matched by the caller's own process id, so no
             // other program can have some window of its choice pinned on top.
             const pid = await senderPid(sender);
+            // Pinning a window over the top bar, out of every switcher, and
+            // reporting the pointer to it is more than Wayland gives any app:
+            // only Coucou gets it, and an island already looked after is not
+            // handed to anyone else while its owner is around.
+            if (executableName(pid) !== APP_EXECUTABLE)
+                throw new Error('only the Coucou app can register');
+            if (this._island && this._island.sender !== sender)
+                throw new Error('another Coucou island is registered');
             this._island?.destroy();
             this._island = new Island(sender, pid, title, gone => {
                 if (this._island === gone) {
@@ -347,53 +388,6 @@ export default class CoucouIslandExtension extends Extension {
     SetFocusableAsync([on], invocation) {
         this._ownedBy(invocation)?.setFocusable(on);
         invocation.return_value(null);
-    }
-
-    async ScreenshotAsync([path], invocation) {
-        const shooter = new Shell.Screenshot();
-        const stream = Gio.File.new_for_path(path).replace(null, false, Gio.FileCreateFlags.NONE, null);
-        await shooter.screenshot(false, stream);
-        stream.close(null);
-        const win = this._island?.window;
-        const actor = win?.get_compositor_private();
-        const rect = win?.get_frame_rect();
-        invocation.return_value(new GLib.Variant('(s)', [JSON.stringify({
-            adopted: !!win,
-            frame: rect ? [rect.x, rect.y, rect.width, rect.height] : null,
-            overTopBar: actor?.get_parent() === global.top_window_group,
-            actorVisible: actor?.visible ?? null,
-            actorMapped: actor?.mapped ?? null,
-            actorBox: actor ? [actor.x, actor.y, actor.width, actor.height] : null,
-            topGroupVisible: global.top_window_group.visible,
-            topGroupMapped: global.top_window_group.mapped,
-            above: win?.is_above() ?? false,
-            focus: global.display.focus_window?.get_title() ?? null,
-        })]));
-    }
-
-    /** Development only: a real click at stage (x, y), then what it opened. */
-    async ClickAsync([x, y], invocation) {
-        const seat = Clutter.get_default_backend().get_default_seat();
-        this._pointer ??= seat.create_virtual_device(Clutter.InputDeviceType.POINTER_DEVICE);
-        const wait = ms => new Promise(r => GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => r() ?? GLib.SOURCE_REMOVE));
-        const now = () => GLib.get_monotonic_time();
-        this._pointer.notify_absolute_motion(now(), x, y);
-        await wait(80);
-        this._pointer.notify_button(now(), Clutter.BUTTON_PRIMARY, Clutter.ButtonState.PRESSED);
-        await wait(60);
-        this._pointer.notify_button(now(), Clutter.BUTTON_PRIMARY, Clutter.ButtonState.RELEASED);
-        await wait(300);
-        const open = Object.entries(Main.panel.statusArea)
-            .filter(([, item]) => item?.menu?.isOpen)
-            .map(([name]) => name);
-        const rect = this._island?.window?.get_frame_rect();
-        invocation.return_value(new GLib.Variant('(s)', [JSON.stringify({
-            frame: rect ? [rect.x, rect.y, rect.width, rect.height] : null,
-            openPanelMenus: open,
-            focus: global.display.focus_window?.get_title() ?? null,
-        })]));
-        for (const name of open)
-            Main.panel.statusArea[name].menu.close();
     }
 
     /** Only the app that registered may steer its island. */
