@@ -3,7 +3,7 @@
 
 import { h, svg, clear } from "./dom";
 import { ICONS } from "./icons";
-import { Bridge, onEvent, type ChatContext, type ChatStreamUpdate } from "../core/bridge";
+import { Bridge, onEvent, type ChatContext, type ChatSession, type ChatStreamUpdate } from "../core/bridge";
 import { Sound } from "../core/sound";
 import { State, type ChatMessage } from "../core/state";
 import type { ViewHost } from "./views";
@@ -29,6 +29,15 @@ function typingDots(): HTMLElement {
   );
 }
 
+/** "14:05" today, "3 Oct" before — when a saved conversation last moved. */
+function when(seconds: number): string {
+  const d = new Date(seconds * 1000);
+  const today = new Date().toDateString() === d.toDateString();
+  return today
+    ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : d.toLocaleDateString([], { day: "numeric", month: "short" });
+}
+
 /** The coloured chip showing what the question is about (a dropped file). */
 function contextChip(label: string): HTMLElement {
   const chip = h("div", { class: "chip" }, h("i", { class: "chip-dot" }), h("span", { text: label }));
@@ -46,16 +55,21 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
     spellcheck: "false",
   }) as HTMLInputElement;
   const send = h("button", { class: "send-btn", title: "Send" }, svg(ICONS.arrowUp, 11));
-  const bar = h("div", { class: "chat-bar" }, input, send);
+  const newBtn = h("button", { class: "bar-btn", title: "New chat" }, svg(ICONS.compose, 14));
+  const historyBtn = h("button", { class: "bar-btn", title: "Earlier chats" }, svg(ICONS.clock, 14));
+  const bar = h("div", { class: "chat-bar" }, newBtn, historyBtn, input, send);
+  /** Earlier conversations, shown in place of the log. */
+  const history = h("div", { class: "chat-history" });
 
   const el = h(
     "div",
     { class: "view" },
-    h("div", { class: "card wash chat-card" }, h("div", { class: "chat-body" }, chipRow, log, bar)),
+    h("div", { class: "card wash chat-card" }, h("div", { class: "chat-body" }, chipRow, log, history, bar)),
   );
   (el.querySelector(".card") as HTMLElement).style.setProperty("--wash", "rgba(99,102,241,0.5)");
 
   let sending = false;
+  let historyOpen = false;
   let renderedKey = "";
   /** The answer being streamed in, once its first words have arrived. */
   let streaming: ChatMessage | null = null;
@@ -117,6 +131,66 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
     }
   }
 
+  function newChat() {
+    if (sending) return;
+    Sound.play("send");
+    void Bridge.chatReset();
+    State.chatHistory = [];
+    State.droppedFile = null;
+    showHistory(false);
+    State.notify();
+    onHeightChange();
+    input.focus();
+  }
+
+  function historyRow(session: ChatSession): HTMLElement {
+    const meta = `${when(session.modified)} · ${session.messages} messages${session.current ? " · open" : ""}`;
+    const row = h(
+      "button",
+      { class: session.current ? "history-row current" : "history-row" },
+      h("span", { class: "history-title", text: session.title }),
+      h("span", { class: "history-meta", text: meta }),
+    );
+    row.addEventListener("click", async () => {
+      if (session.current) {
+        showHistory(false);
+        return;
+      }
+      try {
+        // The messages come back as `chat-restored`, which refills the log.
+        await Bridge.chatResume(session.id);
+        showHistory(false);
+      } catch (err) {
+        State.noteMessage = String(err).replace(/^Error:\s*/, "");
+        State.view = "note";
+        State.notify();
+      }
+    });
+    return row;
+  }
+
+  async function showHistory(open: boolean) {
+    historyOpen = open;
+    historyBtn.classList.toggle("on", open);
+    log.style.display = open ? "none" : "";
+    history.style.display = open ? "" : "none";
+    if (!open) {
+      input.focus();
+      return;
+    }
+    clear(history);
+    const sessions = (await Bridge.chatSessions()) ?? [];
+    if (!historyOpen) return;
+    clear(history);
+    if (sessions.length === 0) {
+      history.append(h("div", { class: "history-empty", text: "No earlier chats yet." }));
+    }
+    for (const s of sessions) history.append(historyRow(s));
+  }
+  history.style.display = "none";
+
+  newBtn.addEventListener("click", () => newChat());
+  historyBtn.addEventListener("click", () => void showHistory(!historyOpen));
   send.addEventListener("click", () => void submit());
   input.addEventListener("keydown", (e) => {
     if ((e as KeyboardEvent).key === "Enter") {
@@ -151,6 +225,10 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
 
       input.placeholder = State.chatHistory.length === 0 ? "Ask me anything…" : "Continue…";
       input.disabled = sending;
+      newBtn.toggleAttribute("disabled", sending);
+      // Only Claude Code keeps conversations to come back to.
+      historyBtn.style.display = State.settings.chatBackend === "api-key" ? "none" : "";
+      if (historyOpen && (sending || State.settings.chatBackend === "api-key")) void showHistory(false);
     },
     focus() {
       input.focus();

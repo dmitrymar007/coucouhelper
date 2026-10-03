@@ -79,8 +79,9 @@ commands, no MCP servers, no hooks — so a page or file with hidden
 instructions has nothing to read and nowhere to send it. A file you drop
 travels inside your first message, as with the API key. It stops after the idle time you pick,
 from **Stop now** or the tray's **Stop chat**, and with Coucou. Claude Code
-keeps the conversations in `~/.claude/projects/`, and **Continue last chat**
-brings the last one back into the island.
+keeps the conversations in `~/.claude/projects/`. In the chat, the pencil
+starts a new conversation and the clock lists the earlier ones — pick one to
+continue it; **Settings → Chat → Continue last chat** brings back the last.
 
 The other backend, **Anthropic API key**, works as before:
 **Settings… → Claude** takes your Anthropic API key. Keys live in the **Windows

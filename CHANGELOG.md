@@ -3,6 +3,7 @@
 ## Unreleased (coucouhelper, Linux)
 
 - GNOME on Wayland (temporary, until the GNOME Shell extension): Coucou runs through Xwayland, where the island is a dock window centred right below the top bar, with its header and wake strip in reach, instead of a window GNOME places wherever it likes. `COUCOU_X11=0` keeps native Wayland.
+- The chat has a new-chat button and a list of earlier chats at the start of its input bar; pick one and the conversation comes back, ready to continue (Claude Code chats).
 - Linux: Mochi's eyes follow the pointer outside the island too, wherever X11 can see it.
 - Chat on your Claude subscription: the island's chat now goes through Claude Code (`claude`) by default, no API key needed. It runs in the background from your first message, with web search only — no access to your files, no edits, no commands, no MCP servers, no hooks — and answers stream in as they are written. Choose the model, when it stops, stop it by hand (Settings or the tray) or continue the last conversation in Settings → Chat. The API key stays available as the other backend.
 - Linux: the island folds 2 seconds after the pointer leaves it on the overview, finished, error and note views — the closest thing to the Mac's click-outside, which Linux never reports to the app.

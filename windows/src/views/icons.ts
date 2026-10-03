@@ -2,6 +2,10 @@
 // Drawn on a 24×24 grid so they read at the same optical size.
 
 export const ICONS = {
+  // square.and.pencil — new chat
+  compose: "M4 5.5h8.6v1.8H5.8v11h11v-6.8h1.8v8.6H4V5.5zm14.3-2.4 2.6 2.6-8.5 8.5H9.8v-2.6l8.5-8.5z",
+  // clock — earlier chats
+  clock: "M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17zm0 1.9a6.6 6.6 0 1 1 0 13.2 6.6 6.6 0 0 1 0-13.2zm-.95 2.4v5l3.6 2.15.95-1.55-2.7-1.6V7.8h-1.85z",
   // house.fill
   house: "M12 3.2 2.8 10.6V21h6.6v-5.4h5.2V21h6.6V10.6L12 3.2z",
   // bubble.left.fill

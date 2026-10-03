@@ -315,10 +315,37 @@ fn chat_resume_last(app: AppHandle, shared: State<Shared>, chat: State<Chat>) ->
         .last_chat_session
         .clone()
         .ok_or("No saved conversation yet.")?;
-    let messages = chat.resume(&session)?;
+    resume_chat(&app, &chat, &session)
+}
+
+/// The chat's history button: one of the conversations from `chat_sessions`.
+#[tauri::command]
+fn chat_resume(app: AppHandle, chat: State<Chat>, session: String) -> Result<usize, String> {
+    resume_chat(&app, &chat, &session)
+}
+
+fn resume_chat(app: &AppHandle, chat: &Chat, session: &str) -> Result<usize, String> {
+    let messages = chat.resume(session)?;
     let count = messages.len();
     let _ = app.emit_to(island::WINDOW_LABEL, "chat-restored", messages);
     Ok(count)
+}
+
+/// Recent conversations for the chat's history list, the live one marked.
+#[tauri::command]
+fn chat_sessions(chat: State<Chat>) -> Vec<ChatSessionRow> {
+    let current = chat.status().session_id;
+    chat.sessions(12)
+        .into_iter()
+        .map(|info| ChatSessionRow { current: current.as_deref() == Some(info.id.as_str()), info })
+        .collect()
+}
+
+#[derive(Serialize)]
+struct ChatSessionRow {
+    #[serde(flatten)]
+    info: claude_cli::SessionInfo,
+    current: bool,
 }
 
 /// Copies a dropped file into the inbox and reports its name back.
@@ -468,6 +495,8 @@ pub fn run() {
             chat_status,
             chat_install,
             chat_resume_last,
+            chat_resume,
+            chat_sessions,
             ingest_file,
             secret_present,
             secret_set,

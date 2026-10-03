@@ -92,6 +92,10 @@ export const Bridge = {
   chatInstall: () => call<ClaudeInstall>("chat_install"),
   /** Hands the last Claude Code conversation back to the island. */
   chatResumeLast: () => callOrThrow<number>("chat_resume_last"),
+  /** Recent Claude Code conversations started from the island, newest first. */
+  chatSessions: () => call<ChatSession[]>("chat_sessions"),
+  /** Picks one of them up again; its messages arrive as `chat-restored`. */
+  chatResume: (session: string) => callOrThrow<number>("chat_resume", { session }),
   /** Copies a dropped file into the inbox. */
   ingestFile: (path: string) => callOrThrow<DroppedFile>("ingest_file", { path }),
   /** Only ever tells you whether a key exists — never its value. */
@@ -117,6 +121,15 @@ export interface IntegrationUpdate {
 
 /** A piece of the answer while it is still coming (Claude Code chat). */
 export type ChatStreamUpdate = { kind: "text"; text: string } | { kind: "tool"; name: string };
+
+export interface ChatSession {
+  id: string;
+  title: string;
+  /** Seconds since 1970. */
+  modified: number;
+  messages: number;
+  current: boolean;
+}
 
 export interface ChatStatus {
   running: boolean;

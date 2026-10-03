@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::claude::{self, ChatContext, ChatReply};
-use crate::claude_cli::{self, CliChat, CliStatus, StreamUpdate, TranscriptMessage};
+use crate::claude_cli::{self, CliChat, CliStatus, SessionInfo, StreamUpdate, TranscriptMessage};
 use crate::settings::Settings;
 
 /// Values of `Settings::chat_backend`.
@@ -107,6 +107,11 @@ impl Chat {
     pub fn resume(&self, session: &str) -> Result<Vec<TranscriptMessage>, String> {
         self.api.reset();
         self.cli.resume(session)
+    }
+
+    /// Recent Claude Code conversations started from the island.
+    pub fn sessions(&self, limit: usize) -> Vec<SessionInfo> {
+        claude_cli::list_sessions(limit)
     }
 }
 

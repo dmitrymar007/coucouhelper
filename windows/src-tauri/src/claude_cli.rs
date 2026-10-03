@@ -12,7 +12,7 @@
 // Claude Code saves the conversation in ~/.claude/projects/, like any other
 // session; `--resume` picks it up again in a new process.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -143,6 +143,57 @@ fn transcript_path(id: &str) -> Option<PathBuf> {
         .filter_map(Result::ok)
         .map(|dir| dir.path().join(&file))
         .find(|p| p.is_file())
+}
+
+/// Claude Code's folder name for a working directory: every character that is
+/// not an ASCII letter or digit becomes a dash.
+fn project_folder_name(dir: &Path) -> String {
+    dir.to_string_lossy()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect()
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionInfo {
+    pub id: String,
+    /// The first thing the user asked.
+    pub title: String,
+    /// Last change, in seconds since 1970.
+    pub modified: u64,
+    pub messages: usize,
+}
+
+/// The chat's own saved conversations, newest first. Only those started from
+/// Coucou: they all live in the folder named after the chat's working directory.
+pub fn list_sessions(limit: usize) -> Vec<SessionInfo> {
+    let dir = projects_dir().join(project_folder_name(&work_dir()));
+    let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
+    let mut files: Vec<(std::time::SystemTime, String, PathBuf)> = entries
+        .filter_map(Result::ok)
+        .filter_map(|e| {
+            let path = e.path();
+            let id = path.file_name()?.to_str()?.strip_suffix(".jsonl")?.to_string();
+            let modified = e.metadata().ok()?.modified().ok()?;
+            is_session_id(&id).then_some((modified, id, path))
+        })
+        .collect();
+    files.sort_by(|a, b| b.0.cmp(&a.0));
+    files
+        .into_iter()
+        .filter_map(|(modified, id, path)| {
+            let messages = parse_transcript(&std::fs::read_to_string(&path).ok()?);
+            let first = messages.iter().find(|m| m.role == "user")?;
+            Some(SessionInfo {
+                id,
+                title: first.content.lines().next().unwrap_or("").chars().take(80).collect(),
+                modified: modified.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0),
+                messages: messages.len(),
+            })
+        })
+        .take(limit)
+        .collect()
 }
 
 /// A UUID, and nothing that could walk out of the projects folder.
@@ -648,6 +699,15 @@ mod tests {
         let again = args("", "f2032dcc-af80-4924-ba0b-3231991b3a4d", true);
         assert!(again.join(" ").ends_with("--resume f2032dcc-af80-4924-ba0b-3231991b3a4d"));
         assert!(!again.iter().any(|a| a == "--model"));
+    }
+
+    #[test]
+    fn project_folders_are_named_like_claude_code_names_them() {
+        assert_eq!(
+            project_folder_name(Path::new("/home/dima/.local/share/coucou/chat")),
+            "-home-dima--local-share-coucou-chat"
+        );
+        assert_eq!(project_folder_name(Path::new("/tmp/claude-1000/a_b")), "-tmp-claude-1000-a-b");
     }
 
     #[test]
