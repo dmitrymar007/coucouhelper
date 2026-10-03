@@ -73,9 +73,11 @@ It works from any terminal — Windows Terminal, PowerShell, VS Code, Git Bash.
 By default the chat answers through **Claude Code on your own subscription**:
 install `claude`, sign in once with `claude auth login`, and **Settings… →
 Chat** shows it as ready. Your first message starts a hidden `claude -p`
-process that stays up so the next answers come fast; it can search the web,
-read pages and read the file you dropped, and nothing else — no edits, no
-commands, no MCP servers, no hooks. It stops after the idle time you pick,
+process that stays up so the next answers come fast. It can search the web
+and nothing else — no access to your files, no fetching of URLs, no edits, no
+commands, no MCP servers, no hooks — so a page or file with hidden
+instructions has nothing to read and nowhere to send it. A file you drop
+travels inside your first message, as with the API key. It stops after the idle time you pick,
 from **Stop now** or the tray's **Stop chat**, and with Coucou. Claude Code
 keeps the conversations in `~/.claude/projects/`, and **Continue last chat**
 brings the last one back into the island.

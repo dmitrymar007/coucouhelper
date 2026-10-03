@@ -4,10 +4,10 @@
 // One hidden `claude` process per conversation, started on the first message
 // and kept alive: it reads user messages as stream-json on stdin and streams
 // the answer back as stream-json on stdout, so only the first message pays for
-// the start. It runs lean and harmless: web search, web fetch and file reading
-// only — no edits, no commands, no MCP servers, no plugins, no hooks (Coucou's
-// own hooks would otherwise report the chat as a Claude Code session). It is
-// stopped on demand, after a while idle, and with the app.
+// the start. It runs lean and harmless: web search only — no file access, no
+// edits, no commands, no MCP servers, no plugins, no hooks (Coucou's own hooks
+// would otherwise report the chat as a Claude Code session). It is stopped on
+// demand, after a while idle, and with the app.
 //
 // Claude Code saves the conversation in ~/.claude/projects/, like any other
 // session; `--resume` picks it up again in a new process.
@@ -28,9 +28,12 @@ use crate::platform;
 
 pub const DEFAULT_MODEL: &str = "sonnet";
 
-/// The only tools the chat gets. Everything else — Edit, Write, Bash… — does
-/// not exist in its session at all.
-const TOOLS: &str = "WebSearch,WebFetch,Read";
+/// The only tool the chat gets, as with the API key. Everything else does not
+/// exist in its session at all — Read and WebFetch included: together they
+/// would let a prompt injected through a web page or a dropped file read any
+/// file of the user's (~/.ssh, Claude's own credentials) and send it off in a
+/// URL. A dropped file needs neither: it rides in the first message.
+const TOOLS: &str = "WebSearch";
 
 /// Longest silence inside one answer before the process is presumed stuck. A
 /// web search can take a while, but never this long.
@@ -632,8 +635,9 @@ mod tests {
         let first = args("sonnet", "f2032dcc-af80-4924-ba0b-3231991b3a4d", false);
         let joined = first.join(" ");
         assert!(joined.contains("--strict-mcp-config"));
-        assert!(joined.contains("--tools WebSearch,WebFetch,Read"));
-        assert!(joined.contains("--allowedTools WebSearch,WebFetch,Read"));
+        // Web search and nothing else: no file reads, no fetching URLs.
+        assert!(joined.contains("--tools WebSearch --allowedTools WebSearch "));
+        assert!(!joined.contains("Read") && !joined.contains("WebFetch") && !joined.contains("Bash"));
         assert!(joined.contains(r#"{"disableAllHooks":true}"#));
         assert!(joined.ends_with("--session-id f2032dcc-af80-4924-ba0b-3231991b3a4d"));
         assert!(!first.iter().any(|a| a == "--bare"), "--bare would skip the subscription login");

@@ -231,8 +231,8 @@ function chatSection(): HTMLElement {
     h("div", {
       class: "hint",
       text:
-        "The chat runs Claude Code in the background with web search, web pages and file reading only: " +
-        "no edits, no commands, no MCP servers, no hooks. It starts with your first message and keeps " +
+        "The chat runs Claude Code in the background with web search only: " +
+        "no access to your files, no edits, no commands, no MCP servers, no hooks. It starts with your first message and keeps " +
         "running so the next answers come quickly. Conversations are saved by Claude Code in ~/.claude/projects.",
     }),
   ];
