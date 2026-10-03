@@ -25,7 +25,9 @@ use gtk::glib::translate::ToGlibPtr;
 use gtk::prelude::*;
 use tauri::{AppHandle, WebviewWindow};
 
-use super::{home_dir, LocalTime};
+use super::{home_dir, LocalTime, ShellEvent};
+
+mod gnome_shell;
 
 /// File name of the Claude Code relay.
 pub const HOOK_EXE: &str = "coucou-hook";
@@ -65,6 +67,11 @@ pub fn local_dir() -> PathBuf {
 /// every launch, so each launch would rewrite the system's registry with
 /// plugin paths that vanish once Coucou quits. Give ours its own file.
 pub fn prepare_environment() {
+    if shell_extension_wanted() {
+        let found = gnome_shell::on_bus();
+        SHELL_EXTENSION.store(found, Ordering::Relaxed);
+        crate::log::line(format!("GNOME extension at launch: {}", if found { "running" } else { "not running" }));
+    }
     prefer_x11_on_gnome();
     X11.store(gdk_backend_is_x11(), Ordering::Relaxed);
 
@@ -88,6 +95,10 @@ static X11: AtomicBool = AtomicBool::new(false);
 /// windows. `COUCOU_X11=0` keeps native Wayland; an explicit `GDK_BACKEND`
 /// always wins.
 fn prefer_x11_on_gnome() {
+    // The extension does everything Xwayland was for, and more.
+    if SHELL_EXTENSION.load(Ordering::Relaxed) {
+        return;
+    }
     let wanted = std::env::var("COUCOU_X11").map(|v| v != "0").unwrap_or(true);
     let gnome = desktop_is_gnome(&std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default());
     let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some();
@@ -95,6 +106,47 @@ fn prefer_x11_on_gnome() {
     if wanted && gnome && wayland && xwayland && std::env::var_os("GDK_BACKEND").is_none() {
         std::env::set_var("GDK_BACKEND", "x11");
     }
+}
+
+/// True when the Coucou GNOME Shell extension was running at launch: the app
+/// then stays on native Wayland and lets the extension place the island.
+static SHELL_EXTENSION: AtomicBool = AtomicBool::new(false);
+
+/// GNOME on Wayland, unless `COUCOU_SHELL_EXTENSION=0`.
+fn shell_extension_wanted() -> bool {
+    std::env::var("COUCOU_SHELL_EXTENSION").map(|v| v != "0").unwrap_or(true)
+        && desktop_is_gnome(&std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default())
+        && std::env::var_os("WAYLAND_DISPLAY").is_some()
+}
+
+/// Starts following the GNOME Shell extension, if it was there at launch.
+/// Main thread only.
+pub fn shell_extension_start(on_event: impl Fn(ShellEvent) + 'static) {
+    if SHELL_EXTENSION.load(Ordering::Relaxed) && !X11.load(Ordering::Relaxed) {
+        gnome_shell::start(on_event);
+    }
+}
+
+/// While the island is open the extension reports the pointer; hidden, it
+/// reports nothing and nothing runs.
+pub fn pointer_watch(on: bool) {
+    if gnome_shell::active() {
+        gnome_shell::set_tracking(on);
+    }
+}
+
+/// The monitor the island lives on, for the extension to centre it there.
+pub fn place_island(screen: &str) {
+    if gnome_shell::active() {
+        gnome_shell::set_placement(screen);
+    }
+}
+
+/// With the extension the window never shrinks to the wake strip: resizing a
+/// window the compositor places would make it jump for a frame. The strip is
+/// then only the input region, in the middle of the full-size window.
+pub fn island_keeps_full_size() -> bool {
+    gnome_shell::active()
 }
 
 /// `XDG_CURRENT_DESKTOP` is a colon-separated list, `ubuntu:GNOME` on Ubuntu.
@@ -439,6 +491,11 @@ pub fn set_activating(win: &WebviewWindow, activating: bool) {
     // The island is created `focusable: false` (tauri.linux.conf.json), so GTK
     // refuses focus until we say otherwise — on a layer surface too.
     gw.set_accept_focus(activating);
+    // Under the extension, Wayland has no say: the extension hands the
+    // keyboard to the island, or keeps it away.
+    if gnome_shell::active() {
+        gnome_shell::set_focusable(activating);
+    }
     if LAYER_SURFACE.load(Ordering::Relaxed) {
         let mode = if activating { layer::KEYBOARD_ON_DEMAND } else { layer::KEYBOARD_NONE };
         unsafe { layer::gtk_layer_set_keyboard_mode(gtk_window_ptr(&gw), mode) };

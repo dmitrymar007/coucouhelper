@@ -635,6 +635,18 @@ export class Island {
   }
 
   /**
+   * Linux with the GNOME extension: a press anywhere else folds the open
+   * island, the way a popover closes. A pinned card waiting for an answer and
+   * a file drop in progress stay. (The Mac folds on its timer only.)
+   */
+  pressOutside() {
+    if (State.mode !== "expanded" || State.isPinned) return;
+    if (UPLOAD_VIEWS.has(State.view) || State.view === "greeting") return;
+    void Bridge.log("press outside — folding");
+    this.collapse();
+  }
+
+  /**
    * Cursor from the X11 poll (Linux on Xwayland), away from the island: it only
    * steers Mochi's eyes. Hover stays with the page's own events, because under
    * Xwayland the position goes stale as soon as the pointer is over a native

@@ -238,6 +238,17 @@ pub fn set_activating(win: &WebviewWindow, activating: bool) {
 /// Click-through here is the poll's WS_EX_TRANSPARENT toggle, not a region.
 pub fn set_input_region(_win: &WebviewWindow, _rect: Option<(f64, f64, f64, f64)>) {}
 
+/// No shell helper on Windows: the island places itself.
+pub fn shell_extension_start(_on_event: impl Fn(super::ShellEvent) + 'static) {}
+
+pub fn pointer_watch(_on: bool) {}
+
+pub fn place_island(_screen: &str) {}
+
+pub fn island_keeps_full_size() -> bool {
+    false
+}
+
 /// The island sits right against the top edge of the screen.
 pub fn top_inset(_pos: (i32, i32), _size: (u32, u32)) -> i32 {
     0

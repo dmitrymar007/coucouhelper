@@ -26,6 +26,7 @@ async function main() {
 
   await onEvent<{ x: number; y: number }>("cursor", ({ x, y }) => island.onCursor(x, y));
   await onEvent<{ x: number; y: number }>("cursor-far", ({ x, y }) => island.onFarCursor(x, y));
+  await onEvent<null>("press-outside", () => island.pressOutside());
 
   // Settings → Continue last chat: the conversation comes back into the island.
   await onEvent<{ role: "user" | "assistant"; content: string }[]>("chat-restored", (messages) => {

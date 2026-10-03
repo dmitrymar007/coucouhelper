@@ -87,6 +87,7 @@ impl PollGate {
         let mut guard = self.active.lock().unwrap();
         *guard = on;
         self.cv.notify_all();
+        platform::pointer_watch(on);
     }
 
     fn wait_until_active(&self) {
@@ -152,6 +153,8 @@ pub fn screen_info(app: &AppHandle, pref: &str) -> ScreenInfo {
 pub fn apply_geometry(app: &AppHandle, pref: &str, collapsed: bool) {
     let Some(win) = window(app) else { return };
     let Some(m) = target_monitor(app, pref) else { return };
+    platform::place_island(pref);
+    let collapsed = collapsed && !platform::island_keeps_full_size();
 
     let scale = m.scale_factor();
     let mp = *m.position();
@@ -308,8 +311,10 @@ pub fn refresh_click_through(app: &AppHandle, gate: &PollGate) {
     let region = if gate.collapsed.load(Ordering::Relaxed) {
         // The wake strip itself, never "the whole window": if the window ever
         // fails to shrink to the strip, the rest of it must not swallow clicks
-        // meant for whatever sits under the top of the screen.
-        Some((0.0, 0.0, STRIP_W, STRIP_H))
+        // meant for whatever sits under the top of the screen. A window kept at
+        // full size has the strip in the middle of its top edge.
+        let x = if platform::island_keeps_full_size() { (PANEL_W - STRIP_W) / 2.0 } else { 0.0 };
+        Some((x, 0.0, STRIP_W, STRIP_H))
     } else {
         let r = *gate.rect.lock().unwrap();
         if r.w <= 0.0 {
@@ -324,6 +329,31 @@ pub fn refresh_click_through(app: &AppHandle, gate: &PollGate) {
         }
     };
     platform::set_input_region(&win, region);
+}
+
+/// Last button state the shell reported, to see presses begin.
+static SHELL_PRESSED: AtomicBool = AtomicBool::new(false);
+
+/// The pointer as the desktop shell reports it (GNOME extension), anywhere
+/// on screen. It steers Mochi's eyes, and a press away from the open island
+/// folds it — a click elsewhere is a click elsewhere.
+pub fn shell_pointer(app: &AppHandle, gate: &PollGate, x: f64, y: f64, pressed: bool) {
+    let _ = app.emit_to(WINDOW_LABEL, "cursor-far", CursorPayload { x, y });
+    let began = pressed && !SHELL_PRESSED.swap(pressed, Ordering::Relaxed);
+    if !pressed {
+        SHELL_PRESSED.store(false, Ordering::Relaxed);
+    }
+    if began && !gate.collapsed.load(Ordering::Relaxed) && !on_island(&gate.rect.lock().unwrap(), x, y) {
+        let _ = app.emit_to(WINDOW_LABEL, "press-outside", ());
+    }
+}
+
+fn on_island(r: &IslandRect, x: f64, y: f64) -> bool {
+    r.w > 0.0
+        && x >= r.x - HIT_MARGIN
+        && x <= r.x + r.w + HIT_MARGIN
+        && y >= r.y - HIT_MARGIN
+        && y <= r.y + r.h + HIT_MARGIN
 }
 
 pub fn set_ignore_cursor(app: &AppHandle, ignore: bool) {

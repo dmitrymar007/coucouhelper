@@ -25,6 +25,15 @@ pub struct LocalTime {
     pub second: u32,
 }
 
+/// News from the desktop shell's helper (the GNOME Shell extension on Linux).
+pub enum ShellEvent {
+    /// It took the island on (true), or went away (false).
+    Active(bool),
+    /// Pointer relative to the island window, logical pixels, and whether a
+    /// mouse button is held.
+    Pointer { x: f64, y: f64, pressed: bool },
+}
+
 /// The user's home directory, where `.claude/settings.json` lives.
 pub fn home_dir() -> PathBuf {
     std::env::var_os(HOME_VAR)

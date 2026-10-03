@@ -526,6 +526,24 @@ pub fn run() {
             gate.set_active(true);
             island::spawn_cursor_poll(handle.clone(), gate.clone());
 
+            // GNOME: the Coucou extension places the island over the top bar
+            // and reports the pointer; it comes and goes (screen lock).
+            let shell_app = handle.clone();
+            let shell_gate = gate.clone();
+            platform::shell_extension_start(move |event| match event {
+                platform::ShellEvent::Active(on) => {
+                    log::line(format!("shell extension {}", if on { "active" } else { "inactive" }));
+                    let pref = shell_app.state::<Shared>().settings.lock().unwrap().screen.clone();
+                    let collapsed = shell_gate.collapsed.load(Ordering::Relaxed);
+                    island::apply_geometry(&shell_app, &pref, collapsed);
+                    island::refresh_click_through(&shell_app, &shell_gate);
+                    platform::pointer_watch(!collapsed);
+                }
+                platform::ShellEvent::Pointer { x, y, pressed } => {
+                    island::shell_pointer(&shell_app, &shell_gate, x, y, pressed);
+                }
+            });
+
             log::line(format!("--- Coucou {} started ---", env!("CARGO_PKG_VERSION")));
             hooks::ensure_hook_exe(&handle);
             pipe::start(handle.clone());
