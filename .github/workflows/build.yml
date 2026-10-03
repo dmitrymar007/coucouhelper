@@ -1,10 +1,8 @@
 name: Build
 
+# Fork: the macOS build runs only by hand — this fork targets Linux.
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
 
 jobs:
   build:

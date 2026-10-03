@@ -1,3 +1,5 @@
+> **coucouhelper** — a private Linux-focused fork of [Louis-CFM/coucou](https://github.com/Louis-CFM/coucou) (GNOME support, Claude Code subscription chat). Code under the MIT License; the Coucou name, Mochi and the sounds stay with their author, see [LICENSE-ASSETS.md](LICENSE-ASSETS.md).
+
 <div align="center">
 
 <img src="NotchBuddy/Assets.xcassets/AppIcon.appiconset/icon_256x256.png" width="96" alt="Coucou icon">
