@@ -120,6 +120,12 @@ export const Bridge = {
   chatOpencodeModels: () => call<string[]>("chat_opencode_models"),
   /** Hands the last Claude Code or opencode conversation back to the island. */
   chatResumeLast: () => callOrThrow<number>("chat_resume_last"),
+  // ── opencode plugin ──────────────────────────────────────────────────────
+  opencodePluginStatus: () => call<OpencodePluginStatus>("opencode_plugin_status"),
+  /** Only from an explicit click in Settings. */
+  opencodePluginInstall: () => callOrThrow<OpencodePluginStatus>("opencode_plugin_install"),
+  /** Only from an explicit click in Settings. */
+  opencodePluginRemove: () => callOrThrow<OpencodePluginStatus>("opencode_plugin_remove"),
   // ── GNOME Shell extension ────────────────────────────────────────────────
   shellExtensionStatus: () => call<ShellExtensionStatus>("shell_extension_status"),
   /** Only from an explicit click in Settings. */
@@ -179,6 +185,14 @@ export interface ClaudeInstall {
   path: string | null;
   loggedIn: boolean;
   authMethod: string | null;
+}
+
+export interface OpencodePluginStatus {
+  /** opencode itself is installed. */
+  opencode: boolean;
+  installed: boolean;
+  upToDate: boolean;
+  path: string;
 }
 
 export interface OpencodeInstall {

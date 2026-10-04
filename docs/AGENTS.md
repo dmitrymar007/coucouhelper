@@ -74,10 +74,18 @@ Send newline-terminated JSON to the socket:
 ## Supported events
 
 All standard Claude Code hook events are supported, **except `PermissionRequest`**:
-approval cards are not yet implemented for third-party agents (only Claude Code gets
-one). A `PermissionRequest` from an external agent is answered immediately with no
+approval cards are not yet implemented for most third-party agents. A
+`PermissionRequest` from an external agent is answered immediately with no
 decision, so the relay writes nothing and the agent re-asks in its terminal.
 Approval support for other agents will be added with Codex support.
+
+**Exception (Windows/Linux app): opencode.** The Coucou plugin for opencode
+(`windows/opencode-plugin/coucou.js`, installed from Settings → opencode) sends
+opencode's `permission.asked` as a `PermissionRequest` with `--agent opencode`,
+turns the relay's answer into opencode's own reply (`once` or `reject`), and
+kills the relay when the question is answered in opencode first. On the app
+side, a relay that closes its connection while a card is up takes the card
+down (`approval-gone`), for Claude Code too.
 
 The pill lifecycle:
 

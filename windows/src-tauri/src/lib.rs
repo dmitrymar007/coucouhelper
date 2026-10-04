@@ -4,6 +4,7 @@ mod chat;
 mod claude;
 mod claude_cli;
 mod opencode_cli;
+mod opencode_plugin;
 mod files;
 mod hooks;
 mod integrations;
@@ -344,6 +345,24 @@ async fn chat_install() -> claude_cli::Install {
     chat::install_status().await
 }
 
+/// The Coucou plugin for opencode: installed, up to date?
+#[tauri::command]
+fn opencode_plugin_status() -> opencode_plugin::Status {
+    opencode_plugin::status()
+}
+
+/// Only from an explicit click in Settings.
+#[tauri::command]
+fn opencode_plugin_install() -> Result<opencode_plugin::Status, String> {
+    opencode_plugin::install()
+}
+
+/// Only from an explicit click in Settings.
+#[tauri::command]
+fn opencode_plugin_remove() -> Result<opencode_plugin::Status, String> {
+    opencode_plugin::remove()
+}
+
 /// Is `opencode` installed, and which version? Asked by the settings window.
 #[tauri::command]
 async fn chat_opencode_install() -> opencode_cli::Install {
@@ -601,6 +620,9 @@ pub fn run() {
             chat_install,
             chat_opencode_install,
             chat_opencode_models,
+            opencode_plugin_status,
+            opencode_plugin_install,
+            opencode_plugin_remove,
             chat_resume_last,
             chat_resume,
             chat_sessions,

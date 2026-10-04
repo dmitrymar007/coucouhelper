@@ -1,0 +1,200 @@
+// Coucou — puts this opencode's sessions on the Coucou island, the way Claude
+// Code's hooks do: what it is doing, when it is done or failed, and its
+// permission requests, with Allow and Deny.
+//
+// Coucou writes this file to ~/.config/opencode/plugin/ from Settings →
+// opencode, with the path of its relay filled in below. Every event goes
+// through that relay (coucou-hook --agent opencode), exactly like a Claude Code
+// hook, and nothing else leaves this machine.
+//
+// Never in the way: when Coucou is not running the relay exits at once, and a
+// permission request stays in opencode too — whichever answers first, the
+// terminal or the island, decides.
+
+import { spawn } from "node:child_process";
+
+const RELAY = "__COUCOU_RELAY__";
+const AGENT = "opencode";
+
+/** opencode's tool names → the Claude Code names the island knows. */
+const TOOLS = {
+  bash: "Bash",
+  read: "Read",
+  write: "Write",
+  edit: "Edit",
+  multiedit: "MultiEdit",
+  patch: "Edit",
+  apply_patch: "Edit",
+  glob: "Glob",
+  grep: "Grep",
+  list: "LS",
+  webfetch: "WebFetch",
+  websearch: "WebSearch",
+  task: "Task",
+  todowrite: "TodoWrite",
+};
+
+const toolName = (tool) => TOOLS[tool] ?? tool;
+
+/** The strings of a tool's arguments, under Claude Code's field names. */
+function toolInput(args) {
+  const input = {};
+  for (const [key, value] of Object.entries(args ?? {})) {
+    if (typeof value !== "string") continue;
+    input[key === "filePath" || key === "filepath" ? "file_path" : key] = value;
+  }
+  return input;
+}
+
+/**
+ * Hands one event to Coucou. `answer` resolves with the island's decision
+ * ("allow", "deny") for a permission request, or null; `child` is the relay,
+ * to drop the request when it is answered in opencode first.
+ */
+function relay(payload, waitForAnswer = false) {
+  let child;
+  try {
+    child = spawn(RELAY, ["--agent", AGENT], {
+      stdio: ["pipe", waitForAnswer ? "pipe" : "ignore", "ignore"],
+    });
+  } catch {
+    return { child: null, answer: Promise.resolve(null) };
+  }
+  const answer = new Promise((resolve) => {
+    let out = "";
+    child.stdout?.on("data", (chunk) => (out += chunk));
+    child.on("error", () => resolve(null));
+    child.on("close", () => {
+      try {
+        const behavior = JSON.parse(out).hookSpecificOutput?.decision?.behavior;
+        resolve(behavior === "allow" || behavior === "deny" ? behavior : null);
+      } catch {
+        resolve(null);
+      }
+    });
+  });
+  child.stdin.on("error", () => {});
+  child.stdin.end(JSON.stringify(payload));
+  return { child, answer };
+}
+
+/** What a permission is about, as the island's approval card shows it. */
+function permissionTarget(p) {
+  const meta = p.metadata ?? {};
+  const patterns = Array.isArray(p.patterns) ? p.patterns.join(", ") : "";
+  switch (p.permission) {
+    case "bash":
+      return { tool_name: "Bash", tool_input: { command: meta.command ?? patterns } };
+    case "edit":
+    case "write":
+      return { tool_name: toolName(p.permission), tool_input: { file_path: meta.filepath ?? meta.filePath ?? patterns } };
+    case "webfetch":
+      return { tool_name: "WebFetch", tool_input: { url: meta.url ?? patterns } };
+    default:
+      return { tool_name: p.permission ?? "Permission", tool_input: { command: patterns } };
+  }
+}
+
+export const Coucou = async ({ client, directory }) => {
+  // Coucou's own chat runs opencode too: it is not a session to show.
+  if (process.env.COUCOU_CHAT) return {};
+
+  /** Sessions started by a task tool → their parent: subagent steps of it. */
+  const children = new Map();
+  /** Sessions this opencode has shown, to end them when it quits. */
+  const open = new Set();
+  /** Permission requests on the island: id → relay process. */
+  const asking = new Map();
+
+  const base = (event, sessionID) => ({ hook_event_name: event, session_id: sessionID, cwd: directory });
+  const send = (event, sessionID, extra = {}) => {
+    if (!sessionID || children.has(sessionID)) return;
+    open.add(sessionID);
+    relay({ ...base(event, sessionID), ...extra });
+  };
+
+  async function ask(p) {
+    if (children.has(p.sessionID)) return;
+    const { child, answer } = relay(
+      { ...base("PermissionRequest", p.sessionID), ...permissionTarget(p), permission_id: p.id },
+      true,
+    );
+    if (!child) return;
+    asking.set(p.id, child);
+    const decision = await answer;
+    // Gone from the map: opencode had the answer first.
+    if (!asking.delete(p.id) || !decision) return;
+    try {
+      await client.postSessionIdPermissionsPermissionId({
+        path: { id: p.sessionID, permissionID: p.id },
+        body: { response: decision === "allow" ? "once" : "reject" },
+      });
+    } catch {
+      // Answered meanwhile, or opencode is going away: nothing to do.
+    }
+  }
+
+  return {
+    event: async ({ event }) => {
+      const p = event.properties ?? {};
+      switch (event.type) {
+        case "session.created":
+          if (p.info?.parentID) {
+            children.set(p.info.id, p.info.parentID);
+            send("SubagentStart", p.info.parentID);
+          } else {
+            send("SessionStart", p.info?.id ?? p.sessionID);
+          }
+          break;
+        case "session.idle":
+          if (children.has(p.sessionID)) {
+            send("SubagentStop", children.get(p.sessionID));
+          } else {
+            send("Stop", p.sessionID);
+          }
+          break;
+        case "session.error":
+          // Esc in opencode aborts the answer: not a failure worth an alert.
+          if (p.error?.name === "MessageAbortedError") break;
+          send("StopFailure", p.sessionID, { message: String(p.error?.data?.message ?? p.error?.name ?? "error") });
+          break;
+        case "session.deleted":
+          send("SessionEnd", p.info?.id ?? p.sessionID);
+          open.delete(p.info?.id ?? p.sessionID);
+          break;
+        case "permission.asked":
+          void ask(p);
+          break;
+        case "permission.replied": {
+          const id = p.requestID ?? p.permissionID;
+          const child = asking.get(id);
+          if (child) {
+            asking.delete(id);
+            child.kill();
+          }
+          break;
+        }
+      }
+    },
+    "chat.message": async (input, output) => {
+      const prompt = (output?.parts ?? [])
+        .filter((part) => part.type === "text" && !part.synthetic)
+        .map((part) => part.text)
+        .join("\n")
+        .trim();
+      if (prompt) send("UserPromptSubmit", input.sessionID, { prompt: prompt.slice(0, 500) });
+    },
+    "tool.execute.before": async (input, output) => {
+      send("PreToolUse", input.sessionID, { tool_name: toolName(input.tool), tool_input: toolInput(output?.args) });
+    },
+    "tool.execute.after": async (input) => {
+      send("PostToolUse", input.sessionID, { tool_name: toolName(input.tool) });
+    },
+    dispose: async () => {
+      for (const child of asking.values()) child.kill();
+      asking.clear();
+      for (const id of open) relay({ ...base("SessionEnd", id) });
+      open.clear();
+    },
+  };
+};

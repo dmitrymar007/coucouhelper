@@ -212,7 +212,16 @@ async fn handle(app: AppHandle, mut pipe: impl Relay) {
     log::line(format!("hook PermissionRequest id={id}"));
     let _ = app.emit_to(WINDOW_LABEL, "hook", payload);
 
-    let decision = wait_for_decision(&id, &mut rx).await;
+    // The relay going away (the question was answered in the terminal, or the
+    // agent quit) ends the wait too, and takes the card off the island.
+    let decision = tokio::select! {
+        d = wait_for_decision(&id, &mut rx) => d,
+        _ = relay_gone(&mut pipe) => {
+            log::line(format!("hook id={id} relay gone — answered elsewhere"));
+            let _ = app.emit_to(WINDOW_LABEL, "approval-gone", id.clone());
+            None
+        }
+    };
     app.state::<Pending>().0.lock().unwrap().remove(&id);
 
     // No decision: say nothing at all. coucou-hook then writes nothing to stdout
@@ -222,6 +231,18 @@ async fn handle(app: AppHandle, mut pipe: impl Relay) {
         let _ = pipe.flush().await;
     }
     pipe.finish();
+}
+
+/// Resolves once the relay closes its end. It writes nothing more after the
+/// request, so any read that returns is the end of the conversation.
+async fn relay_gone(pipe: &mut impl Relay) {
+    let mut sink = [0u8; 256];
+    loop {
+        match pipe.read(&mut sink).await {
+            Ok(0) | Err(_) => return,
+            Ok(_) => {}
+        }
+    }
 }
 
 /// Two waits: a short one for "the card is up", then the long one for a human.

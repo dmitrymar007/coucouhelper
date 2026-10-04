@@ -93,6 +93,15 @@ config is read, never changed. opencode keeps the conversations; the clock in
 the chat lists them as with Claude Code. Answers arrive a paragraph at a time
 rather than word by word, and a PDF is read only by models that take PDFs.
 
+**opencode sessions on the island**: **Settings… → opencode → Install plugin**
+writes one file, `~/.config/opencode/plugin/coucou.js`, and nothing else of
+opencode's. From opencode's next start its sessions get their own pill — the
+prompt, each tool, done or failed — and its permission requests an approval
+card with Allow and Deny. The request stays in opencode too: whichever answers
+first, the terminal or the island, decides, and the card goes away when the
+terminal wins. The plugin talks to Coucou through the same relay as Claude
+Code's hooks, and stays out of Coucou's own opencode chat.
+
 The third backend, **Anthropic API key**, works as before:
 **Settings… → Claude** takes your Anthropic API key. Keys live in the **Windows
 Credential Manager**, never on disk and never in the interface — the island can

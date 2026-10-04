@@ -2,6 +2,8 @@
 
 ## Unreleased (coucouhelper, Linux)
 
+- opencode sessions on the island: Settings → opencode → Install plugin. Each session gets its own pill (prompt, tools, done, failed) and its permission requests an approval card with Allow and Deny; answering in opencode first takes the card down.
+- An approval card now goes away as soon as the question is answered in the terminal, instead of staying up until it times out.
 - The chat can answer through opencode: Settings → Chat → Answers from → opencode, then any model from the providers set up in opencode (OpenCode Zen, OpenRouter, OpenAI-compatible endpoints…). Web search only, as with Claude Code; the clock lists earlier opencode chats to continue.
 - GNOME: started at login before GNOME has loaded its extensions, Coucou waits for the Coucou extension instead of falling back below the top bar; minimizing a window or switching workspaces no longer brings the old window back.
 - Send a dropped file by email again: through Resend (API key and the new Sender field), or into your mail app with the file attached.

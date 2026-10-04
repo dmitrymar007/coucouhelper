@@ -3,7 +3,7 @@
 // integrations land here too in a later stage.
 
 import "./settings.css";
-import { Bridge, onEvent, type HookStatus, type ShellExtensionStatus } from "../core/bridge";
+import { Bridge, onEvent, type HookStatus, type OpencodePluginStatus, type ShellExtensionStatus } from "../core/bridge";
 import { DEFAULT_SETTINGS, type Settings } from "../core/state";
 import { h, clear } from "../views/dom";
 
@@ -358,6 +358,71 @@ function chatSection(): HTMLElement {
   );
 }
 
+// ── opencode section ──────────────────────────────────────────────────────────
+
+/** The Coucou plugin for opencode: its sessions and permission requests on the island. */
+function opencodeSection(initial: OpencodePluginStatus): HTMLElement {
+  const dot = statusDot(false);
+  const state = h("div", { class: "hint" });
+  const installBtn = h("button", { class: "primary" });
+  const removeBtn = h("button", { class: "danger", text: "Remove" });
+  const feedback = h("div", {});
+
+  function draw(st: OpencodePluginStatus) {
+    dot.style.background = st.installed && st.upToDate ? "#22c55e" : st.installed ? "#f7b32b" : "#f4505e";
+    if (st.installed && st.upToDate) {
+      state.textContent = "Installed: opencode sessions show up on the island, with Allow and Deny for their permission requests.";
+    } else if (st.installed) {
+      state.textContent = "An update for the Coucou plugin is ready. Install it, then restart opencode.";
+    } else if (!st.opencode) {
+      state.textContent = "opencode was not found. Once it is installed, the Coucou plugin shows its sessions on the island.";
+    } else {
+      state.textContent =
+        "Show opencode sessions on the island like Claude Code's: what it is doing, when it is done, " +
+        "and its permission requests with Allow and Deny.";
+    }
+    installBtn.textContent = st.installed && !st.upToDate ? "Update plugin" : "Install plugin";
+    installBtn.style.display = st.installed && st.upToDate ? "none" : "";
+    removeBtn.style.display = st.installed ? "" : "none";
+  }
+
+  installBtn.addEventListener("click", async () => {
+    clear(feedback);
+    try {
+      draw(await Bridge.opencodePluginInstall());
+      feedback.append(h("div", { class: "notice ok", text: "Done. opencode loads it from its next start." }));
+    } catch (err) {
+      feedback.append(h("div", { class: "notice err", text: `Could not install: ${String(err)}` }));
+    }
+  });
+
+  removeBtn.addEventListener("click", async () => {
+    clear(feedback);
+    try {
+      draw(await Bridge.opencodePluginRemove());
+      feedback.append(h("div", { class: "notice ok", text: "Removed. Running opencode sessions keep it until they restart." }));
+    } catch (err) {
+      feedback.append(h("div", { class: "notice err", text: `Could not remove: ${String(err)}` }));
+    }
+  });
+
+  draw(initial);
+  return h(
+    "section",
+    {},
+    h("h2", {}, dot, h("span", { text: "opencode" })),
+    state,
+    h("div", { class: "row" }, installBtn, removeBtn),
+    h("div", {
+      class: "hint",
+      text:
+        `Installing writes one file, ${initial.path}, and changes nothing else of opencode's. ` +
+        "A permission request stays in opencode too: whichever answers first, the terminal or the island, decides.",
+    }),
+    feedback,
+  );
+}
+
 // ── GNOME section ─────────────────────────────────────────────────────────────
 
 /** The Coucou GNOME Shell extension: what it is, whether it runs, install or remove it. */
@@ -690,6 +755,7 @@ async function main() {
 
   const hasKey = (await Bridge.secretPresent("anthropic-api-key")) ?? false;
   const shell = await Bridge.shellExtensionStatus();
+  const opencodePlugin = await Bridge.opencodePluginStatus();
 
   const keys = [
     "stripe-api-key", "github-token", "vercel-token",
@@ -702,6 +768,7 @@ async function main() {
   root.append(
     h("h1", {}, h("span", { text: "Coucou" }), h("span", { class: "version", text: version })),
     claudeSection(status),
+    ...(opencodePlugin ? [opencodeSection(opencodePlugin)] : []),
     ...(shell?.applicable ? [gnomeSection(shell)] : []),
     chatSection(),
     apiSection(hasKey),

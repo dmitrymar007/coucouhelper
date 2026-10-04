@@ -25,6 +25,8 @@ export interface AgentTask {
 
 export interface ApprovalInfo {
   requestId: string;
+  /** The pill asking: Claude Code, or an agent whose relay can carry the answer back. */
+  agentId: string;
   sessionId: string;
   tool: string;
   command: string;

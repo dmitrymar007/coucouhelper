@@ -10,6 +10,14 @@ import type { Island } from "./island";
 
 const CLAUDE_ID = "integration_claude";
 
+/**
+ * External agents whose relay turns the island's answer into their own: the
+ * Coucou plugin for opencode replies to opencode's permission request. Any
+ * other agent's request goes back to its terminal, since a Claude Code-shaped
+ * answer would mean nothing to it.
+ */
+const APPROVAL_AGENTS: ReadonlySet<string> = new Set(["agent_opencode"]);
+
 /** Clears the approval card if no decision was made before the hook gave up. */
 let pendingTimeout: number | null = null;
 
@@ -147,6 +155,25 @@ function clearSession() {
 
 export function registerHookHandlers(island: Island) {
   void onEvent<HookPayload>("hook", (payload) => handleHook(island, payload));
+  // The relay went away while the card was up: the question was answered in
+  // the terminal (or the agent quit), so the card has nothing left to decide.
+  void onEvent<string>("approval-gone", (requestId) => {
+    if (State.pendingApproval?.requestId !== requestId) return;
+    clearApproval(island, State.pendingApproval.agentId);
+  });
+}
+
+/** Takes the approval card down and hands the island back. */
+function clearApproval(island: Island, agentId: string) {
+  if (pendingTimeout != null) window.clearTimeout(pendingTimeout);
+  pendingTimeout = null;
+  State.pendingApproval = null;
+  State.isPinned = false;
+  island.dropPin();
+  State.updateTask(agentId, "working");
+  State.setPillBadge(agentId, null);
+  if (State.view === "approval") island.setView(State.defaultView());
+  State.notify();
 }
 
 function handleHook(island: Island, payload: HookPayload) {
@@ -187,6 +214,10 @@ function handleHook(island: Island, payload: HookPayload) {
   const ensurePill = () => {
     if (isExternalAgent) {
       State.upsertExternalAgent(agentId, validAgent!, agentColor(validAgent!));
+      // "Open terminal" brings back the agent's window, as for Claude Code.
+      const t = State.tasks.find((x) => x.id === agentId);
+      if (t && cwd) t.sessionCwd = cwd;
+      if (t && pids.length) t.sessionPids = pids;
     } else {
       upsert(projectName, cwd, pids);
     }
@@ -281,10 +312,9 @@ function handleHook(island: Island, payload: HookPayload) {
       break;
 
     case "PermissionRequest": {
-      // External agents do not get an approval card — showing one would look like
-      // a Claude Code request. Decline immediately so the agent re-asks in its
-      // terminal. Approval support for other agents will come with Codex support.
-      if (isExternalAgent) {
+      // An external agent gets a card only if its relay can carry the answer
+      // back (opencode's plugin can); any other re-asks in its terminal.
+      if (isExternalAgent && !APPROVAL_AGENTS.has(agentId)) {
         if (payload.request_id) void Bridge.approvalDecline(payload.request_id);
         break;
       }
@@ -297,12 +327,13 @@ function handleHook(island: Island, payload: HookPayload) {
         if (requestId) void Bridge.approvalDecline(requestId);
         break;
       }
-      upsert(projectName, cwd, pids);
+      ensurePill();
       if (pendingTimeout != null) window.clearTimeout(pendingTimeout);
       const tool = payload.tool_name ?? "Tool";
       const input = payload.tool_input ?? {};
       State.pendingApproval = {
         requestId,
+        agentId,
         sessionId: payload.session_id ?? "",
         tool,
         command: approvalTarget(tool, input),
@@ -310,7 +341,7 @@ function handleHook(island: Island, payload: HookPayload) {
       // The relay's short ack window closes in 800 ms; everything below this
       // line is synchronous, so the card really is up by the time it lands.
       if (requestId) void Bridge.approvalAck(requestId);
-      State.updateTask(CLAUDE_ID, "approval");
+      State.updateTask(agentId, "approval");
       State.isPinned = true;
       Sound.play("approval");
       if (focused) {
@@ -319,21 +350,14 @@ function handleHook(island: Island, payload: HookPayload) {
         // Another agent holds the view, so the card would yank it away. The badge
         // is the signal instead — but it has to be on screen for that to mean
         // anything, hence the reveal. We just told the relay a human can act.
-        State.setPillBadge(CLAUDE_ID, "approval");
+        State.setPillBadge(agentId, "approval");
         island.reveal();
       }
       // Coucou answers within 108 s or not at all; after that the terminal has
       // taken over and the card would be lying.
       pendingTimeout = window.setTimeout(() => {
         pendingTimeout = null;
-        if (!State.pendingApproval) return;
-        State.pendingApproval = null;
-        State.isPinned = false;
-        island.dropPin();
-        State.updateTask(CLAUDE_ID, "working");
-        State.setPillBadge(CLAUDE_ID, null);
-        if (State.view === "approval") island.setView(State.defaultView());
-        State.notify();
+        if (State.pendingApproval) clearApproval(island, State.pendingApproval.agentId);
       }, 110_000);
       break;
     }
