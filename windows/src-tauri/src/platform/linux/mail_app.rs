@@ -12,6 +12,8 @@
 //     the attachment as a proper file:// URL.
 // Anything else goes through xdg-email as before.
 
+use std::ffi::CString;
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, SystemTime};
@@ -143,91 +145,135 @@ pub fn find() -> Option<MailApp> {
     Some(MailApp { exec, sandbox, thunderbird })
 }
 
-/// A folder the app can read, or None when it can read the inbox itself:
-/// the sandbox's own root in the home, and the copies' folder inside it.
-fn readable_dir(sandbox: &Sandbox) -> Option<(PathBuf, PathBuf)> {
-    let root = match sandbox {
+/// The path, below the home, of the folder a sandboxed app can read, or None
+/// when it can read the inbox itself.
+fn readable_dir(sandbox: &Sandbox) -> Option<Vec<String>> {
+    let parts = match sandbox {
         Sandbox::None => return None,
-        Sandbox::Snap(name) => home_dir().join("snap").join(name),
-        Sandbox::Flatpak(id) => home_dir().join(".var/app").join(id),
+        Sandbox::Snap(name) => ["snap", name.as_str(), "common", "coucou-mail"].map(String::from).to_vec(),
+        Sandbox::Flatpak(id) => [".var", "app", id.as_str(), "cache", "coucou-mail"].map(String::from).to_vec(),
     };
-    let dir = match sandbox {
-        Sandbox::Snap(_) => root.join("common").join("coucou-mail"),
-        _ => root.join("cache").join("coucou-mail"),
-    };
-    Some((root, dir))
+    // A name from a desktop file must stay one plain path component.
+    parts.iter().all(|p| !p.is_empty() && p != "." && p != ".." && !p.contains('/') && !p.contains('\0')).then_some(parts)
 }
 
-/// The sandboxed app can write in its own folder, so it could plant a
-/// symlink there to make Coucou — which runs outside the sandbox — write or
-/// delete somewhere else. Every step from the sandbox's root down must be a
-/// real folder, and the folder must really be where it says.
-fn checked_dir(root: &Path, dir: &Path) -> Result<PathBuf, String> {
-    let refuse = || "The mail app's folder looks tampered with; the file was not attached.".to_string();
-    let mut at = root.to_path_buf();
-    let steps: Vec<_> = dir.strip_prefix(root).map_err(|_| refuse())?.components().collect();
-    for step in std::iter::once(None).chain(steps.into_iter().map(Some)) {
-        if let Some(step) = step {
-            at.push(step);
+// The sandboxed app can write in its own folder, so it can plant or swap a
+// symlink there at any moment to make Coucou — which runs outside the
+// sandbox — write or delete somewhere else. Checking paths first and using
+// them after leaves a window for that swap. So nothing here goes through a
+// path: every step is openat() on the folder opened before it, with
+// O_NOFOLLOW, and the files are made and removed relative to those handles.
+
+fn c_name(name: &str) -> Result<CString, String> {
+    CString::new(name).map_err(|_| "Bad file name.".to_string())
+}
+
+fn last_error(what: &str) -> String {
+    format!("Could not prepare the attachment ({what}): {}", std::io::Error::last_os_error())
+}
+
+/// Opens folder `name` inside `parent`, never through a symlink; makes it
+/// first when `create` and it is missing.
+fn open_dir_at(parent: RawFd, name: &str, create: bool) -> Result<OwnedFd, String> {
+    let c = c_name(name)?;
+    let flags = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+    let mut fd = unsafe { libc::openat(parent, c.as_ptr(), flags) };
+    if fd < 0 && create && std::io::Error::last_os_error().kind() == std::io::ErrorKind::NotFound {
+        if unsafe { libc::mkdirat(parent, c.as_ptr(), 0o700) } < 0
+            && std::io::Error::last_os_error().kind() != std::io::ErrorKind::AlreadyExists
+        {
+            return Err(last_error(name));
         }
-        match std::fs::symlink_metadata(&at) {
-            Ok(meta) if meta.file_type().is_symlink() || !meta.is_dir() => return Err(refuse()),
-            Ok(_) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                std::fs::create_dir(&at).map_err(|e| format!("Could not prepare the attachment: {e}"))?;
-            }
-            Err(e) => return Err(format!("Could not prepare the attachment: {e}")),
-        }
+        fd = unsafe { libc::openat(parent, c.as_ptr(), flags) };
     }
-    let real = dir.canonicalize().map_err(|_| refuse())?;
-    let expected = root.canonicalize().map_err(|_| refuse())?.join(dir.strip_prefix(root).map_err(|_| refuse())?);
-    if real != expected {
-        return Err(refuse());
+    if fd < 0 {
+        // ELOOP: a symlink stood where a folder should be.
+        return Err("The mail app's folder looks tampered with; the file was not attached.".into());
     }
-    Ok(real)
+    Ok(unsafe { OwnedFd::from_raw_fd(fd) })
 }
 
 /// The attachment where the mail app can read it: the inbox file itself, or
 /// a copy in the app's own folder, in a fresh folder of its own so the name
-/// stays. Nothing on the way follows a symlink.
+/// stays.
 pub fn stage(file: &Path, sandbox: &Sandbox) -> Result<PathBuf, String> {
-    let Some((root, dir)) = readable_dir(sandbox) else { return Ok(file.to_path_buf()) };
-    stage_in(file, &root, &dir)
+    let Some(parts) = readable_dir(sandbox) else { return Ok(file.to_path_buf()) };
+    stage_in(file, &home_dir(), &parts)
 }
 
-fn stage_in(file: &Path, root: &Path, dir: &Path) -> Result<PathBuf, String> {
-    let dir = checked_dir(root, dir)?;
-    sweep(&dir);
-    let stamp = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
-    let slot = dir.join(stamp.to_string());
-    // create_dir, not create_dir_all: it fails on anything already there.
-    std::fs::create_dir(&slot).map_err(|e| format!("Could not prepare the attachment: {e}"))?;
-    let name = file.file_name().ok_or("The file has no name.")?;
-    let copy = slot.join(name);
-    // create_new is O_EXCL: it never opens through a symlink planted meanwhile.
-    let mut out = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&copy)
-        .map_err(|e| format!("Could not prepare the attachment: {e}"))?;
+fn stage_in(file: &Path, home: &Path, parts: &[String]) -> Result<PathBuf, String> {
+    let dir = open_copies_dir(home, parts)?;
+    sweep(dir.as_raw_fd());
+    let name = file.file_name().and_then(|n| n.to_str()).ok_or("The file has no usable name.")?.to_string();
+    let stamp = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0).to_string();
+    let slot_c = c_name(&stamp)?;
+    // mkdirat fails on anything already there, symlink included.
+    if unsafe { libc::mkdirat(dir.as_raw_fd(), slot_c.as_ptr(), 0o700) } < 0 {
+        return Err(last_error("folder"));
+    }
+    let slot = open_dir_at(dir.as_raw_fd(), &stamp, false)?;
+    let name_c = c_name(&name)?;
+    let fd = unsafe {
+        libc::openat(
+            slot.as_raw_fd(),
+            name_c.as_ptr(),
+            libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            0o600 as libc::c_uint,
+        )
+    };
+    if fd < 0 {
+        return Err(last_error("file"));
+    }
+    let mut out = std::fs::File::from(unsafe { OwnedFd::from_raw_fd(fd) });
     let mut src = std::fs::File::open(file).map_err(|e| format!("Could not prepare the attachment: {e}"))?;
     std::io::copy(&mut src, &mut out).map_err(|e| format!("Could not prepare the attachment: {e}"))?;
-    Ok(copy)
+    // The path is only for the mail app, which reads it inside its own sandbox.
+    let mut path = home.to_path_buf();
+    path.extend(parts);
+    Ok(path.join(stamp).join(name))
 }
 
-/// Removes copies older than a day: only our own numbered folders, never a
-/// symlink (remove_dir_all does not follow the ones inside).
-fn sweep(dir: &Path) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
-    for entry in entries.flatten() {
-        let ours = entry.file_name().to_str().is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
-        let Ok(meta) = std::fs::symlink_metadata(entry.path()) else { continue };
-        if !ours || meta.file_type().is_symlink() || !meta.is_dir() {
+/// The copies' folder, walked down from `root` (the home) one component at
+/// a time. The sandbox's own folder must exist already; only the last two
+/// steps, ours, are made.
+fn open_copies_dir(root: &Path, parts: &[String]) -> Result<OwnedFd, String> {
+    let c = CString::new(root.as_os_str().as_encoded_bytes()).map_err(|_| "Bad home folder.".to_string())?;
+    let fd = unsafe { libc::open(c.as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC) };
+    if fd < 0 {
+        return Err(last_error("home"));
+    }
+    let mut dir = unsafe { OwnedFd::from_raw_fd(fd) };
+    for (i, part) in parts.iter().enumerate() {
+        dir = open_dir_at(dir.as_raw_fd(), part, i + 2 >= parts.len())?;
+    }
+    Ok(dir)
+}
+
+/// Entries of an opened folder, read through its handle.
+fn entries(dir: RawFd) -> Vec<String> {
+    std::fs::read_dir(format!("/proc/self/fd/{dir}"))
+        .map(|it| it.flatten().filter_map(|e| e.file_name().into_string().ok()).collect())
+        .unwrap_or_default()
+}
+
+/// Removes copies older than a day: only our own numbered folders, each
+/// opened without following symlinks and emptied through its handle.
+fn sweep(dir: RawFd) {
+    let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+    for name in entries(dir) {
+        let Ok(stamp) = name.parse::<u128>() else { continue };
+        if now.saturating_sub(stamp) < KEEP_COPIES.as_millis() {
             continue;
         }
-        let old = meta.modified().ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age > KEEP_COPIES);
-        if old {
-            let _ = std::fs::remove_dir_all(entry.path());
+        let Ok(slot) = open_dir_at(dir, &name, false) else { continue };
+        for inner in entries(slot.as_raw_fd()) {
+            if let Ok(c) = c_name(&inner) {
+                // Files and symlinks alike are unlinked, never followed.
+                unsafe { libc::unlinkat(slot.as_raw_fd(), c.as_ptr(), 0) };
+            }
+        }
+        if let Ok(c) = c_name(&name) {
+            unsafe { libc::unlinkat(dir, c.as_ptr(), libc::AT_REMOVEDIR) };
         }
     }
 }
@@ -312,30 +358,38 @@ mod tests {
         std::fs::write(&file, "hi").unwrap();
         assert_eq!(stage(&file, &Sandbox::None).unwrap(), file);
 
-        // A sandbox root with the copies' folder made on the way.
-        let root = tmp.join("snap/thunderbird");
-        std::fs::create_dir_all(&root).unwrap();
-        let dir = root.join("common/coucou-mail");
-        let copy = stage_in(&file, &root, &dir).unwrap();
+        // The sandbox's folder exists; the copies' folders are made on the way.
+        let parts: Vec<String> = ["snap", "thunderbird", "common", "coucou-mail"].map(String::from).to_vec();
+        std::fs::create_dir_all(tmp.join("snap/thunderbird")).unwrap();
+        let copy = stage_in(&file, &tmp, &parts).unwrap();
         assert_eq!(std::fs::read_to_string(&copy).unwrap(), "hi");
-        assert!(copy.starts_with(root.canonicalize().unwrap()));
+        assert!(copy.starts_with(tmp.join("snap/thunderbird/common/coucou-mail")));
 
         // A symlink planted by the sandboxed app is refused, and nothing lands
         // where it points.
         let elsewhere = tmp.join("elsewhere");
         std::fs::create_dir_all(&elsewhere).unwrap();
-        let evil_root = tmp.join("snap/evil");
-        std::fs::create_dir_all(evil_root.join("common")).unwrap();
-        std::os::unix::fs::symlink(&elsewhere, evil_root.join("common/coucou-mail")).unwrap();
-        assert!(stage_in(&file, &evil_root, &evil_root.join("common/coucou-mail")).is_err());
+        std::fs::create_dir_all(tmp.join("snap/evil/common")).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, tmp.join("snap/evil/common/coucou-mail")).unwrap();
+        let evil: Vec<String> = ["snap", "evil", "common", "coucou-mail"].map(String::from).to_vec();
+        assert!(stage_in(&file, &tmp, &evil).is_err());
         assert_eq!(std::fs::read_dir(&elsewhere).unwrap().count(), 0);
 
-        // The sweep leaves symlinks and foreign names alone.
+        // The sweep leaves symlinks, fresh copies and foreign names alone, and
+        // never deletes through a link.
+        let dir = tmp.join("snap/thunderbird/common/coucou-mail");
+        std::fs::write(elsewhere.join("keep.txt"), "x").unwrap();
         std::os::unix::fs::symlink(&elsewhere, dir.join("1")).unwrap();
         std::fs::create_dir(dir.join("notes")).unwrap();
-        sweep(&dir);
+        std::fs::create_dir(dir.join("2")).unwrap();
+        std::fs::write(dir.join("2/old.txt"), "x").unwrap();
+        let handle = open_copies_dir(&tmp, &parts).unwrap();
+        sweep(handle.as_raw_fd());
         assert!(dir.join("notes").exists());
-        assert!(elsewhere.exists());
+        assert!(elsewhere.join("keep.txt").exists());
+        assert!(!dir.join("2").exists(), "an old copy goes");
+        assert!(copy.exists(), "a fresh copy stays");
+        assert!(readable_dir(&Sandbox::Snap("../x".into())).is_none());
         std::fs::remove_dir_all(&tmp).unwrap();
     }
 }
