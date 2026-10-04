@@ -14,7 +14,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use gtk::gio;
+use gtk::gio::{self, prelude::*};
 use gtk::glib::{self, ToVariant};
 
 const BUS_NAME: &str = "org.coucouhelper.Shell";
@@ -222,4 +222,85 @@ pub fn set_placement(screen: &str) {
             send("SetPlacement", (screen.as_str(),).to_variant());
         }
     });
+}
+
+// ── Installing the extension ──────────────────────────────────────────────────
+
+/// The extension's id, and its folder name under the user's extensions.
+const UUID: &str = "coucou@coucouhelper";
+
+/// The files GNOME Shell needs, built into the app. debug.js stays out: it is
+/// for test shells only.
+const FILES: [(&str, &str); 2] = [
+    ("metadata.json", include_str!("../../../../gnome-extension/metadata.json")),
+    ("extension.js", include_str!("../../../../gnome-extension/extension.js")),
+];
+
+fn install_dir() -> std::path::PathBuf {
+    super::xdg("XDG_DATA_HOME", ".local/share").join("gnome-shell/extensions").join(UUID)
+}
+
+/// org.gnome.shell, or None off GNOME (asking gio for a missing schema aborts).
+fn shell_settings() -> Option<gio::Settings> {
+    let source = gio::SettingsSchemaSource::default()?;
+    source.lookup("org.gnome.shell", true)?;
+    Some(gio::Settings::new("org.gnome.shell"))
+}
+
+fn enabled_list(settings: &gio::Settings) -> Vec<String> {
+    settings.strv("enabled-extensions").iter().map(|s| s.to_string()).collect()
+}
+
+pub fn status() -> crate::platform::ShellExtensionStatus {
+    let Some(settings) = shell_settings() else { return Default::default() };
+    let dir = install_dir();
+    let installed = dir.join("metadata.json").is_file();
+    let up_to_date = installed
+        && FILES.iter().all(|(name, bundled)| {
+            std::fs::read_to_string(dir.join(name)).is_ok_and(|on_disk| on_disk == *bundled)
+        });
+    crate::platform::ShellExtensionStatus {
+        applicable: true,
+        installed,
+        up_to_date,
+        enabled: enabled_list(&settings).iter().any(|u| u == UUID),
+        user_extensions_disabled: settings.boolean("disable-user-extensions"),
+        active: active(),
+    }
+}
+
+/// Writes the extension where GNOME looks for it and adds it to the ones it
+/// starts. Nothing else of GNOME's is touched. Only ever called from a click
+/// in Settings.
+pub fn install() -> Result<(), String> {
+    let settings = shell_settings().ok_or("This is not a GNOME session.")?;
+    let dir = install_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    for (name, contents) in FILES {
+        std::fs::write(dir.join(name), contents).map_err(|e| format!("{name}: {e}"))?;
+    }
+    let mut list = enabled_list(&settings);
+    if !list.iter().any(|u| u == UUID) {
+        list.push(UUID.to_string());
+        let refs: Vec<&str> = list.iter().map(String::as_str).collect();
+        settings.set_strv("enabled-extensions", refs.as_slice()).map_err(|e| e.to_string())?;
+        gio::Settings::sync();
+    }
+    crate::log::line("GNOME extension installed");
+    Ok(())
+}
+
+/// Turns the extension off (GNOME stops it at once) and deletes its folder.
+pub fn remove() -> Result<(), String> {
+    let settings = shell_settings().ok_or("This is not a GNOME session.")?;
+    let list: Vec<String> = enabled_list(&settings).into_iter().filter(|u| u != UUID).collect();
+    let refs: Vec<&str> = list.iter().map(String::as_str).collect();
+    settings.set_strv("enabled-extensions", refs.as_slice()).map_err(|e| e.to_string())?;
+    gio::Settings::sync();
+    let dir = install_dir();
+    if dir.ends_with(UUID) && dir.is_dir() {
+        std::fs::remove_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    crate::log::line("GNOME extension removed");
+    Ok(())
 }

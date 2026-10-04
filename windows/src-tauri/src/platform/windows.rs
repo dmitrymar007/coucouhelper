@@ -243,6 +243,22 @@ pub fn shell_extension_start(_on_event: impl Fn(super::ShellEvent) + 'static) {}
 
 pub fn pointer_watch(_on: bool) {}
 
+pub fn shell_extension_status() -> super::ShellExtensionStatus {
+    Default::default()
+}
+
+pub fn shell_extension_install() -> Result<(), String> {
+    Err("Only on GNOME.".into())
+}
+
+pub fn shell_extension_remove() -> Result<(), String> {
+    Err("Only on GNOME.".into())
+}
+
+pub fn shell_extension_missing() -> bool {
+    false
+}
+
 pub fn place_island(_screen: &str) {}
 
 pub fn island_keeps_full_size() -> bool {

@@ -3,7 +3,7 @@
 // integrations land here too in a later stage.
 
 import "./settings.css";
-import { Bridge, onEvent, type HookStatus } from "../core/bridge";
+import { Bridge, onEvent, type HookStatus, type ShellExtensionStatus } from "../core/bridge";
 import { DEFAULT_SETTINGS, type Settings } from "../core/state";
 import { h, clear } from "../views/dom";
 
@@ -305,6 +305,74 @@ function chatSection(): HTMLElement {
   );
 }
 
+// ── GNOME section ─────────────────────────────────────────────────────────────
+
+/** The Coucou GNOME Shell extension: what it is, whether it runs, install or remove it. */
+function gnomeSection(initial: ShellExtensionStatus): HTMLElement {
+  const dot = statusDot(initial.active);
+  const state = h("div", { class: "hint" });
+  const installBtn = h("button", { class: "primary" });
+  const removeBtn = h("button", { class: "danger", text: "Remove" });
+  const feedback = h("div", {});
+
+  function draw(st: ShellExtensionStatus) {
+    dot.style.background = st.active ? "#22c55e" : st.installed && st.enabled ? "#f7b32b" : "#f4505e";
+    if (st.active && st.upToDate) {
+      state.textContent = "The Coucou extension is running: the island sits over the top bar, Mochi's eyes follow the pointer everywhere and a click elsewhere folds the island.";
+    } else if (st.userExtensionsDisabled) {
+      state.textContent = "Extensions are turned off in GNOME. Turn them on in the Extensions app, then log out and back in.";
+    } else if (st.installed && !st.upToDate) {
+      state.textContent = "An update for the Coucou extension is ready. Install it, then log out and back in.";
+    } else if (st.installed && st.enabled) {
+      state.textContent = "Installed. GNOME starts new extensions when you log in: log out and back in, then start Coucou again.";
+    } else {
+      state.textContent =
+        "GNOME has no way for an app to sit over the top bar, so for now the island lives just below it. " +
+        "The Coucou GNOME extension puts it over the top bar like the Mac notch, lets Mochi's eyes follow the pointer everywhere " +
+        "and folds the island when you click elsewhere.";
+    }
+    installBtn.textContent = st.installed && !st.upToDate ? "Update extension" : "Install extension";
+    installBtn.style.display = st.installed && st.upToDate && st.enabled ? "none" : "";
+    removeBtn.style.display = st.installed ? "" : "none";
+  }
+
+  installBtn.addEventListener("click", async () => {
+    clear(feedback);
+    try {
+      draw(await Bridge.shellExtensionInstall());
+      feedback.append(h("div", { class: "notice ok", text: "Done. Log out and back in to start it — GNOME loads extensions at login." }));
+    } catch (err) {
+      feedback.append(h("div", { class: "notice err", text: `Could not install: ${String(err)}` }));
+    }
+  });
+
+  removeBtn.addEventListener("click", async () => {
+    clear(feedback);
+    try {
+      draw(await Bridge.shellExtensionRemove());
+      feedback.append(h("div", { class: "notice ok", text: "Removed. GNOME stopped it; restart Coucou to go back to the window below the top bar." }));
+    } catch (err) {
+      feedback.append(h("div", { class: "notice err", text: `Could not remove: ${String(err)}` }));
+    }
+  });
+
+  draw(initial);
+  return h(
+    "section",
+    {},
+    h("h2", {}, dot, h("span", { text: "GNOME" })),
+    state,
+    h("div", { class: "row" }, installBtn, removeBtn),
+    h("div", {
+      class: "hint",
+      text:
+        "Installing writes the extension to ~/.local/share/gnome-shell/extensions/coucou@coucouhelper and adds it to the " +
+        "extensions GNOME starts; nothing else of GNOME's is changed. It only acts on Coucou's own island.",
+    }),
+    feedback,
+  );
+}
+
 // ── Claude API section ────────────────────────────────────────────────────────
 
 const MODELS: [string, string][] = [
@@ -564,6 +632,7 @@ async function main() {
   };
 
   const hasKey = (await Bridge.secretPresent("anthropic-api-key")) ?? false;
+  const shell = await Bridge.shellExtensionStatus();
 
   const keys = [
     "stripe-api-key", "github-token", "vercel-token",
@@ -576,6 +645,7 @@ async function main() {
   root.append(
     h("h1", {}, h("span", { text: "Coucou" }), h("span", { class: "version", text: version })),
     claudeSection(status),
+    ...(shell?.applicable ? [gnomeSection(shell)] : []),
     chatSection(),
     apiSection(hasKey),
     integrationsSection(present),

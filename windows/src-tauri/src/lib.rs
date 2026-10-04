@@ -45,6 +45,8 @@ pub struct BootInfo {
     /// False where click-through is the input region (Linux): the page then
     /// tracks hover from its own mouse events.
     cursor_poll: bool,
+    /// GNOME without the Coucou extension, and the user not told yet.
+    shell_hint: bool,
 }
 
 #[tauri::command]
@@ -53,12 +55,14 @@ fn boot(app: AppHandle, shared: State<Shared>) -> BootInfo {
     // The real state of ~/.claude/settings.json wins over whatever we stored.
     settings.hooks_installed = hooks::status().installed;
     let screen = island::screen_info(&app, &settings.screen);
+    let shell_hint = platform::shell_extension_missing() && !settings.shell_hint_shown;
     BootInfo {
         settings,
         screen,
         version: env!("CARGO_PKG_VERSION").to_string(),
         hook_path: settings::hook_exe_path().to_string_lossy().to_string(),
         cursor_poll: !platform::CLICK_THROUGH_BY_REGION,
+        shell_hint,
     }
 }
 
@@ -69,8 +73,9 @@ fn save_settings(app: AppHandle, shared: State<Shared>, chat: State<Chat>, mut s
         let screen_changed = current.screen != settings.screen;
         let autostart_changed = current.autostart != settings.autostart;
         let backend_changed = current.chat_backend != settings.chat_backend;
-        // Rust keeps this one up to date; a window's copy of it may be stale.
+        // Rust keeps these up to date; a window's copy of them may be stale.
         settings.last_chat_session = current.last_chat_session.clone();
+        settings.shell_hint_shown = current.shell_hint_shown;
         *current = settings.clone();
         (screen_changed, autostart_changed, backend_changed)
     };
@@ -384,6 +389,35 @@ async fn refresh_integration(app: AppHandle, id: String) {
     integrations::poll_once(app, &id).await;
 }
 
+// ── GNOME Shell extension ─────────────────────────────────────────────────────
+
+#[tauri::command]
+fn shell_extension_status() -> platform::ShellExtensionStatus {
+    platform::shell_extension_status()
+}
+
+/// Only ever called from an explicit click in the settings window.
+#[tauri::command]
+fn shell_extension_install() -> Result<platform::ShellExtensionStatus, String> {
+    platform::shell_extension_install()?;
+    Ok(platform::shell_extension_status())
+}
+
+/// Only ever called from an explicit click in the settings window.
+#[tauri::command]
+fn shell_extension_remove() -> Result<platform::ShellExtensionStatus, String> {
+    platform::shell_extension_remove()?;
+    Ok(platform::shell_extension_status())
+}
+
+/// The island showed its one-time note about the extension.
+#[tauri::command]
+fn shell_hint_seen(shared: State<Shared>) {
+    let mut current = shared.settings.lock().unwrap();
+    current.shell_hint_shown = true;
+    let _ = settings::save(&current);
+}
+
 /// Lets the island write to the same log as the Rust side.
 #[tauri::command]
 fn log_line(message: String) {
@@ -497,6 +531,10 @@ pub fn run() {
             chat_resume_last,
             chat_resume,
             chat_sessions,
+            shell_extension_status,
+            shell_extension_install,
+            shell_extension_remove,
+            shell_hint_seen,
             ingest_file,
             secret_present,
             secret_set,

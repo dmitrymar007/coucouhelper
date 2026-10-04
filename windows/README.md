@@ -182,20 +182,33 @@ What changes on Linux:
   top panel, on compositors that support it: COSMIC, KDE Plasma, Hyprland, Sway
   and other wlroots compositors. `COUCOU_LAYER_SHELL=0` forces a regular window
   anywhere.
-- **GNOME** has no layer-shell. For now (a temporary measure until the GNOME
-  Shell extension) Coucou runs there through Xwayland, where the island is an
-  X11 dock window centred right below the top bar: GNOME Shell draws the bar
-  over every window, so the island cannot go over it. `COUCOU_X11=0` keeps
-  native Wayland, where the island is a regular window GNOME places as it
-  likes; an explicit `GDK_BACKEND` always wins.
+- **GNOME** has no layer-shell, so it gets a small GNOME Shell extension,
+  `gnome-extension/` (GNOME 46 and later). **Settings… → GNOME → Install
+  extension** writes it to
+  `~/.local/share/gnome-shell/extensions/coucou@coucouhelper` and adds it to
+  the extensions GNOME starts; GNOME loads it at the next login. It then puts
+  the island at the top centre over the top bar, on every workspace, out of
+  Alt+Tab, the overview and the dock, keeps the keyboard away from it unless
+  the chat needs it, moves the clock to the left end of the bar while the
+  island is there, and tells Coucou where the pointer is while the island is
+  open. It talks to Coucou over D-Bus and only to Coucou: it checks that the
+  caller's executable is `coucou`. Locking the screen turns it off, like every
+  user extension, and Coucou picks it up again after unlocking.
+- **GNOME without the extension**: for now Coucou runs there through
+  Xwayland, where the island is an X11 dock window centred right below the
+  top bar — GNOME Shell draws the bar over every window. This is a temporary
+  fallback. `COUCOU_X11=0` keeps native Wayland, where the island is a regular
+  window GNOME places as it likes; `COUCOU_SHELL_EXTENSION=0` ignores the
+  extension; an explicit `GDK_BACKEND` always wins.
 - **Click-through** is the window's input region, kept equal to the island
   shape, so the compositor sends every other click to what is underneath. The
-  app never hears of a click elsewhere, so instead of the Mac's click-outside
-  the overview, finished, error and note views fold 2 seconds after the
-  pointer leaves the island.
-- **Mochi's eyes** follow the pointer only while it is over the island on
-  Wayland: it gives no app the cursor position anywhere else. Through Xwayland
-  they follow it across the screen, but only while it is over an X11 window.
+  overview, finished, error and note views fold 2 seconds after the pointer
+  leaves the island, and with the GNOME extension a click anywhere else folds
+  the island at once (the Mac folds on its timer only).
+- **Mochi's eyes** follow the pointer across the screen with the GNOME
+  extension. Without it they follow it only over the island on Wayland — it
+  gives no app the cursor position anywhere else — and through Xwayland only
+  while it is over an X11 window.
 - **Claude Code hooks** go through `~/.local/share/coucou/bin/coucou-hook` and a
   Unix socket at `$XDG_RUNTIME_DIR/coucou.sock`. Both ends check that the other
   runs as the same user.
@@ -207,5 +220,6 @@ What changes on Linux:
   window — "Open terminal" opens the folder in VS Code.
 - Started from a terminal inside the snap version of VS Code, the app inherits
   the snap's `GTK_PATH`, `GIO_MODULE_DIR`, `LOCPATH`… and crashes with a
-  `symbol lookup error` in `/snap/core20`. Start it from another terminal, or
-  unset those variables first.
+  `symbol lookup error` in `/snap/core20`, and VS Code's own `GDK_BACKEND=x11`
+  keeps it off Wayland. `scripts/linux-dev.sh` runs `npm run tauri dev` (or
+  any command you give it) without them.

@@ -24,6 +24,18 @@ async function main() {
   State.loadIntegrationTasks();
   if (boot && !boot.cursorPoll) island.followPageCursor();
 
+  // GNOME without the Coucou extension: say once, after the greeting, that
+  // it would put the island over the top bar.
+  if (boot?.shellHint) {
+    window.setTimeout(() => {
+      if (State.mode === "expanded" && State.view !== "greeting") return;
+      State.noteMessage =
+        "GNOME tip: install the Coucou extension in Settings → GNOME to put me over the top bar.";
+      island.alert("note");
+      void Bridge.shellHintSeen();
+    }, 9000);
+  }
+
   await onEvent<{ x: number; y: number }>("cursor", ({ x, y }) => island.onCursor(x, y));
   await onEvent<{ x: number; y: number }>("cursor-far", ({ x, y }) => island.onFarCursor(x, y));
   await onEvent<null>("press-outside", () => island.pressOutside());

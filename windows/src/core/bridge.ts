@@ -28,6 +28,18 @@ export interface BootInfo {
   hookPath: string;
   /** False where the OS has no global cursor (Wayland): see Island.followPageCursor. */
   cursorPoll: boolean;
+  /** GNOME without the Coucou extension, and the user not told yet. */
+  shellHint: boolean;
+}
+
+/** Where the GNOME Shell extension stands (Linux). */
+export interface ShellExtensionStatus {
+  applicable: boolean;
+  installed: boolean;
+  upToDate: boolean;
+  enabled: boolean;
+  userExtensionsDisabled: boolean;
+  active: boolean;
 }
 
 export const Bridge = {
@@ -92,6 +104,13 @@ export const Bridge = {
   chatInstall: () => call<ClaudeInstall>("chat_install"),
   /** Hands the last Claude Code conversation back to the island. */
   chatResumeLast: () => callOrThrow<number>("chat_resume_last"),
+  // ── GNOME Shell extension ────────────────────────────────────────────────
+  shellExtensionStatus: () => call<ShellExtensionStatus>("shell_extension_status"),
+  /** Only from an explicit click in Settings. */
+  shellExtensionInstall: () => callOrThrow<ShellExtensionStatus>("shell_extension_install"),
+  /** Only from an explicit click in Settings. */
+  shellExtensionRemove: () => callOrThrow<ShellExtensionStatus>("shell_extension_remove"),
+  shellHintSeen: () => call<void>("shell_hint_seen"),
   /** Recent Claude Code conversations started from the island, newest first. */
   chatSessions: () => call<ChatSession[]>("chat_sessions"),
   /** Picks one of them up again; its messages arrive as `chat-restored`. */

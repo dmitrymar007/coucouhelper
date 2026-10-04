@@ -33,6 +33,9 @@ pub struct Settings {
     /// Last Claude Code chat session, so it can be picked up after a restart.
     #[serde(default)]
     pub last_chat_session: Option<String>,
+    /// The island has told the user once about the GNOME extension.
+    #[serde(default)]
+    pub shell_hint_shown: bool,
 }
 
 fn default_model() -> String {
@@ -72,6 +75,7 @@ impl Default for Settings {
             cli_model: default_cli_model(),
             chat_idle_minutes: default_chat_idle_minutes(),
             last_chat_session: None,
+            shell_hint_shown: false,
         }
     }
 }

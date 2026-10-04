@@ -119,6 +119,27 @@ fn shell_extension_wanted() -> bool {
         && std::env::var_os("WAYLAND_DISPLAY").is_some()
 }
 
+pub fn shell_extension_status() -> super::ShellExtensionStatus {
+    if !desktop_is_gnome(&std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default()) {
+        return Default::default();
+    }
+    gnome_shell::status()
+}
+
+pub fn shell_extension_install() -> Result<(), String> {
+    gnome_shell::install()
+}
+
+pub fn shell_extension_remove() -> Result<(), String> {
+    gnome_shell::remove()
+}
+
+/// True on GNOME on Wayland when the extension was not running at launch:
+/// the island then lives below the top bar, and the extension would help.
+pub fn shell_extension_missing() -> bool {
+    shell_extension_wanted() && !SHELL_EXTENSION.load(Ordering::Relaxed)
+}
+
 /// Starts following the GNOME Shell extension, if it was there at launch.
 /// Main thread only.
 pub fn shell_extension_start(on_event: impl Fn(ShellEvent) + 'static) {

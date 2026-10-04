@@ -34,6 +34,23 @@ pub enum ShellEvent {
     Pointer { x: f64, y: f64, pressed: bool },
 }
 
+/// Where the GNOME Shell extension stands, for Settings.
+#[derive(serde::Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ShellExtensionStatus {
+    /// A GNOME session: the extension means something here.
+    pub applicable: bool,
+    pub installed: bool,
+    /// The installed files are the ones this build carries.
+    pub up_to_date: bool,
+    /// In GNOME's list of extensions to start.
+    pub enabled: bool,
+    /// GNOME's own switch that turns every user extension off.
+    pub user_extensions_disabled: bool,
+    /// Running and looking after our island right now.
+    pub active: bool,
+}
+
 /// The user's home directory, where `.claude/settings.json` lives.
 pub fn home_dir() -> PathBuf {
     std::env::var_os(HOME_VAR)
