@@ -38,6 +38,12 @@ function when(seconds: number): string {
     : d.toLocaleDateString([], { day: "numeric", month: "short" });
 }
 
+/** "Firefox — Page title", short enough for the chip. */
+function windowLabel(app: string, title: string): string {
+  const label = title && !title.includes(app) ? `${app} — ${title}` : title || app;
+  return label.length > 60 ? `${label.slice(0, 59)}…` : label;
+}
+
 /** The coloured chip showing what the question is about (a dropped file). */
 function contextChip(label: string): HTMLElement {
   const chip = h("div", { class: "chip" }, h("i", { class: "chip-dot" }), h("span", { text: label }));
@@ -103,9 +109,18 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
     State.notify();
     onHeightChange();
 
+    // The file or window the conversation is about rides along with the first
+    // message only, like ClaudeService.chat().
     const file = State.droppedFile;
+    const subject = State.promptContext;
     const context: ChatContext | null =
-      State.chatHistory.length === 1 && file ? { kind: "file", name: file.name, path: file.path } : null;
+      State.chatHistory.length !== 1
+        ? null
+        : file
+          ? { kind: "file", name: file.name, path: file.path }
+          : subject?.kind === "window"
+            ? { kind: "window", appName: subject.appName, title: subject.title }
+            : null;
 
     streaming = null;
     try {
@@ -137,6 +152,7 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
     void Bridge.chatReset();
     State.chatHistory = [];
     State.droppedFile = null;
+    State.promptContext = null;
     showHistory(false);
     State.notify();
     onHeightChange();
@@ -204,7 +220,8 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
     el,
     sync() {
       const file = State.droppedFile;
-      const wantChip = file?.name ?? "";
+      const subject = State.promptContext;
+      const wantChip = file?.name ?? (subject?.kind === "window" ? windowLabel(subject.appName, subject.title) : "");
       if (chipRow.dataset.label !== wantChip) {
         chipRow.dataset.label = wantChip;
         clear(chipRow);

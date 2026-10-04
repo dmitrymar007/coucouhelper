@@ -18,6 +18,8 @@ export interface ViewActions {
   collapse(): void;
   setFocus(id: string): void;
   openTerminal(): void;
+  /** The chat tab was clicked: take the window the user was in as context. */
+  captureWindow(): void;
   /** The ↗ button: opens whatever the focused pill points at. */
   openTarget(): void;
   openUrl(url: string): void;
@@ -80,7 +82,11 @@ function stack(padLeft: number, padRight: number, ...children: Node[]): HTMLElem
 
 export function buildHeader(actions: ViewActions): ViewHost {
   const tabHome = h("button", { class: "tab", title: "Overview", onclick: () => go("overview") }, svg(ICONS.house, 13));
-  const tabChat = h("button", { class: "tab", title: "Ask", onclick: () => go("prompt") }, svg(ICONS.bubble, 13));
+  const tabChat = h(
+    "button",
+    { class: "tab", title: "Ask", onclick: () => { actions.captureWindow(); go("prompt"); } },
+    svg(ICONS.bubble, 13),
+  );
   const tabDrop = h("button", { class: "tab", title: "Drop", onclick: () => go("upload") }, svg(ICONS.plus, 13));
 
   const gearBtn = h("button", { title: "Settings", onclick: () => go("settings") }, svg(ICONS.gear, 14));

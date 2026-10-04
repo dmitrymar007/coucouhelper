@@ -156,9 +156,11 @@ problems. It stays on your machine.
   the top edge instead of hiding in a notch.
 - Permission approval works from **any** terminal; the Mac build only listens to
   VS Code sessions.
-- Not in this version: sending a file by email, dragging Mochi onto a window to
-  attach it as context, and jumping to a specific terminal window — "Open
-  terminal" opens the working folder in VS Code when `code` is on your `PATH`.
+- Sending a dropped file by email works through Resend only (API key and
+  sender address in Settings). Not in this version: dragging Mochi onto a
+  window to attach it as context, and jumping to a specific terminal window —
+  "Open terminal" opens the working folder in VS Code when `code` is on your
+  `PATH`.
 - Cal.com shows the next bookings as a list rather than the Mac's calendar.
 
 ## Linux
@@ -215,9 +217,16 @@ What changes on Linux:
 - **Keys** live in the Secret Service (GNOME Keyring, KWallet).
 - **Files**: preferences in `~/.config/coucou/`, the log at
   `~/.local/share/coucou/coucou.log`.
-- What the Windows build leaves out, this one does too: sending a file by
-  email, dragging Mochi onto a window, and jumping to a specific terminal
-  window — "Open terminal" opens the folder in VS Code.
+- **Sending a dropped file by email** goes through Resend when its API key and
+  sender address are set, as on the Mac; otherwise your mail app opens
+  (`xdg-email`) with the email written and the file attached, and you send it.
+- **With the GNOME extension**, three more things work as on the Mac:
+  "Open terminal" brings back the very terminal or editor window the session
+  runs in (the relay reports the session's parent processes); the chat takes
+  the window you were in as its context; and Mochi dragged out of the open
+  island and dropped on a window attaches that window to a new chat. Linux
+  gives no app a browser's URL, so the context is the app and window title.
+  Without the extension, "Open terminal" opens the folder in VS Code.
 - Started from a terminal inside the snap version of VS Code, the app inherits
   the snap's `GTK_PATH`, `GIO_MODULE_DIR`, `LOCPATH`… and crashes with a
   `symbol lookup error` in `/snap/core20`, and VS Code's own `GDK_BACKEND=x11`

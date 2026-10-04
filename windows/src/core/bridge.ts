@@ -32,6 +32,12 @@ export interface BootInfo {
   shellHint: boolean;
 }
 
+/** Another app's window: its name and title. */
+export interface WindowInfo {
+  appName: string;
+  title: string;
+}
+
 /** Where the GNOME Shell extension stands (Linux). */
 export interface ShellExtensionStatus {
   applicable: boolean;
@@ -66,6 +72,12 @@ export const Bridge = {
 
   /** "Open terminal" → opens the folder in VS Code when `code` is on PATH. */
   openInVSCode: (path: string | null) => call<boolean>("open_in_vscode", { path }),
+  /** "Open terminal": the session's own window (GNOME extension), else VS Code. */
+  focusTerminal: (pids: number[], cwd: string | null) => call<boolean>("focus_terminal", { pids, cwd }),
+  /** The window the user was in before the island (GNOME extension). */
+  windowContext: () => call<WindowInfo | null>("window_context"),
+  /** A press on Mochi that may become a drag onto another window. */
+  windowDrag: (on: boolean) => call<void>("window_drag", { on }),
 
   quit: () => call<void>("quit_app"),
 
@@ -199,6 +211,8 @@ export type BridgeEvent =
   | { name: "cursor"; payload: { x: number; y: number } }
   | { name: "cursor-far"; payload: { x: number; y: number } }
   | { name: "press-outside"; payload: null }
+  | { name: "window-drag"; payload: "out" | "cancel" }
+  | { name: "window-picked"; payload: WindowInfo | null }
   | { name: "chat-stream"; payload: ChatStreamUpdate }
   | { name: "chat-restored"; payload: { role: "user" | "assistant"; content: string }[] }
   | { name: "chat-cleared"; payload: null }

@@ -42,7 +42,7 @@ use win::connect;
 #[cfg(target_os = "linux")]
 mod unix;
 #[cfg(target_os = "linux")]
-use unix::connect;
+use unix::{ancestor_pids, connect};
 
 fn main() {
     // Coucou's own chat runs Claude Code with hooks off; should they fire
@@ -164,6 +164,14 @@ fn read_event() -> Option<(String, String)> {
             let value = std::env::var(var).unwrap_or_default();
             map.insert(key.into(), serde_json::Value::String(value));
         }
+    }
+
+    // The processes the session runs under, nearest first: Claude Code, its
+    // shell, the terminal or editor. "Open terminal" brings the window of
+    // the nearest one that has a window back to the front.
+    #[cfg(target_os = "linux")]
+    if !map.contains_key("ancestor_pids") {
+        map.insert("ancestor_pids".into(), serde_json::json!(ancestor_pids()));
     }
 
     truncate_strings(&mut payload);

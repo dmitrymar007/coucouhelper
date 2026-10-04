@@ -334,6 +334,24 @@ pub fn refresh_click_through(app: &AppHandle, gate: &PollGate) {
 /// Last button state the shell reported, to see presses begin.
 static SHELL_PRESSED: AtomicBool = AtomicBool::new(false);
 static SHELL_POINTER_SEEN: AtomicBool = AtomicBool::new(false);
+/// A press on Mochi that may become a drag onto another window.
+static WINDOW_DRAG: AtomicBool = AtomicBool::new(false);
+/// That drag has left the island.
+static DRAG_OUT: AtomicBool = AtomicBool::new(false);
+
+/// The page saw a press on Mochi (true), or wants the drag dropped (false).
+pub fn arm_window_drag(on: bool) {
+    WINDOW_DRAG.store(on, Ordering::Relaxed);
+    DRAG_OUT.store(false, Ordering::Relaxed);
+}
+
+/// The window Mochi was dropped on, for the chat's context.
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowContext {
+    pub app_name: String,
+    pub title: String,
+}
 
 /// The pointer as the desktop shell reports it (GNOME extension), anywhere
 /// on screen and always current — unlike the page's own mouse events, which
@@ -345,11 +363,33 @@ pub fn shell_pointer(app: &AppHandle, gate: &PollGate, x: f64, y: f64, pressed: 
         crate::log::line("pointer arrives from the GNOME extension");
     }
     let _ = app.emit_to(WINDOW_LABEL, "cursor", CursorPayload { x, y });
-    let began = pressed && !SHELL_PRESSED.swap(pressed, Ordering::Relaxed);
-    if !pressed {
-        SHELL_PRESSED.store(false, Ordering::Relaxed);
+    let was_pressed = SHELL_PRESSED.swap(pressed, Ordering::Relaxed);
+    let inside = on_island(&gate.rect.lock().unwrap(), x, y);
+
+    // Mochi dragged onto another window (IslandWindowController's attach
+    // drag): out of the island with the button held, released over a window.
+    if WINDOW_DRAG.load(Ordering::Relaxed) {
+        if pressed && !inside && !DRAG_OUT.swap(true, Ordering::Relaxed) {
+            let _ = app.emit_to(WINDOW_LABEL, "window-drag", "out");
+        }
+        if was_pressed && !pressed {
+            WINDOW_DRAG.store(false, Ordering::Relaxed);
+            if DRAG_OUT.swap(false, Ordering::Relaxed) {
+                if inside {
+                    let _ = app.emit_to(WINDOW_LABEL, "window-drag", "cancel");
+                } else {
+                    let app = app.clone();
+                    platform::window_at(x, y, move |hit| {
+                        let picked = hit.map(|(app_name, title)| WindowContext { app_name, title });
+                        let _ = app.emit_to(WINDOW_LABEL, "window-picked", picked);
+                    });
+                }
+            }
+        }
+        return;
     }
-    if began && !gate.collapsed.load(Ordering::Relaxed) && !on_island(&gate.rect.lock().unwrap(), x, y) {
+
+    if pressed && !was_pressed && !gate.collapsed.load(Ordering::Relaxed) && !inside {
         let _ = app.emit_to(WINDOW_LABEL, "press-outside", ());
     }
 }

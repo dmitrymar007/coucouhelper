@@ -2,6 +2,8 @@
 
 ## Unreleased (coucouhelper, Linux)
 
+- Send a dropped file by email again: through Resend (API key and the new Sender field), or into your mail app with the file attached.
+- With the GNOME extension: "Open terminal" brings back the terminal or editor window the session runs in, the chat takes the window you were in as its context, and dragging Mochi onto a window attaches it to a new chat.
 - GNOME: a GNOME Shell extension puts the island over the top bar, like the Mac notch, keeps it out of Alt+Tab, the overview and the dock, moves the clock to the left while the island is there, lets Mochi's eyes follow the pointer everywhere and folds the island on a click elsewhere. Install or remove it in Settings → GNOME; GNOME starts it at the next login. Without it, the Xwayland window below the top bar stays as the fallback.
 - GNOME on Wayland (temporary, until the GNOME Shell extension): Coucou runs through Xwayland, where the island is a dock window centred right below the top bar, with its header and wake strip in reach, instead of a window GNOME places wherever it likes. `COUCOU_X11=0` keeps native Wayland.
 - The chat has a new-chat button and a list of earlier chats at the start of its input bar; pick one and the conversation comes back, ready to continue (Claude Code chats).

@@ -19,6 +19,8 @@ export interface AgentTask {
   miniEye?: EyeShape | null;
   pillBadge?: PillBadge | null;
   sessionCwd?: string | null;
+  /** The session's ancestor processes (Linux), to find its terminal window. */
+  sessionPids?: number[] | null;
 }
 
 export interface ApprovalInfo {

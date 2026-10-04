@@ -64,6 +64,23 @@ const iface = (extraMethods = '') => `<node>
     <method name="SetFocusable">
       <arg type="b" name="on" direction="in"/>
     </method>
+    <method name="ActivateWindowOf">
+      <arg type="au" name="pids" direction="in"/>
+      <arg type="s" name="hint" direction="in"/>
+      <arg type="b" name="found" direction="out"/>
+    </method>
+    <method name="LastFocusedWindow">
+      <arg type="b" name="found" direction="out"/>
+      <arg type="s" name="app" direction="out"/>
+      <arg type="s" name="title" direction="out"/>
+    </method>
+    <method name="WindowAt">
+      <arg type="d" name="x" direction="in"/>
+      <arg type="d" name="y" direction="in"/>
+      <arg type="b" name="found" direction="out"/>
+      <arg type="s" name="app" direction="out"/>
+      <arg type="s" name="title" direction="out"/>
+    </method>
     <property name="Protocol" type="u" access="read"/>
     <signal name="Pointer">
       <arg type="d" name="x"/>
@@ -73,6 +90,20 @@ const iface = (extraMethods = '') => `<node>
     ${extraMethods}
   </interface>
 </node>`;
+
+/** A window the user works in: not ours, not a menu, a tooltip or the desktop. */
+function isUserWindow(win) {
+    return !!win && !win._coucouIsland && !win.skip_taskbar &&
+        win.get_window_type() === Meta.WindowType.NORMAL;
+}
+
+/** The app's name ("Firefox") and the window title, for the chat's context. */
+function describe(win) {
+    const app = Shell.WindowTracker.get_default().get_window_app(win);
+    return [true, app?.get_name() ?? win.get_wm_class() ?? '', win.get_title() ?? ''];
+}
+
+const NOTHING = [false, '', ''];
 
 /** Process id behind a D-Bus connection, as the bus daemon vouches for it. */
 async function senderPid(sender) {
@@ -105,7 +136,9 @@ class Island {
         this._windowSignals = [];
         this._pointerSource = 0;
         this._lastPointer = null;
-        this._lastFocus = null;
+        // Where the user is right now, for the chat's context until focus moves.
+        const focused = global.display.focus_window;
+        this._lastFocus = isUserWindow(focused) ? focused : null;
 
         // The app quitting or crashing ends the registration.
         this._watch = Gio.bus_watch_name_on_connection(
@@ -266,6 +299,51 @@ class Island {
         }
     }
 
+    /** The window the user was in before the island, if it is still there. */
+    lastFocused() {
+        const win = this._lastFocus;
+        return isUserWindow(win) && win.get_compositor_private() ? describe(win) : NOTHING;
+    }
+
+    /** The topmost window under a point given relative to the island. */
+    windowAt(x, y) {
+        if (!this._window)
+            return NOTHING;
+        const origin = this._window.get_frame_rect();
+        const px = origin.x + x;
+        const py = origin.y + y;
+        const workspace = global.workspace_manager.get_active_workspace();
+        const candidates = global.display.list_all_windows().filter(w =>
+            isUserWindow(w) && !w.minimized && w.showing_on_its_workspace?.() !== false &&
+            (w.is_on_all_workspaces() || w.get_workspace() === workspace));
+        const hit = global.display.sort_windows_by_stacking(candidates).reverse().find(w => {
+            const r = w.get_frame_rect();
+            return px >= r.x && px < r.x + r.width && py >= r.y && py < r.y + r.height;
+        });
+        return hit ? describe(hit) : NOTHING;
+    }
+
+    /**
+     * Brings back the window of the nearest process in `pids` (Claude Code's
+     * ancestors, nearest first) that has one. One process can own several —
+     * gnome-terminal, VS Code — so a title containing `hint` (the project
+     * folder) wins, then the most recently used.
+     */
+    activateWindowOf(pids, hint) {
+        const windows = global.display.list_all_windows().filter(isUserWindow);
+        for (const pid of pids) {
+            const mine = windows.filter(w => w.get_pid() === pid);
+            if (!mine.length)
+                continue;
+            const titled = hint ? mine.filter(w => (w.get_title() ?? '').includes(hint)) : [];
+            const pool = titled.length ? titled : mine;
+            const pick = pool.sort((a, b) => b.get_user_time() - a.get_user_time())[0];
+            Main.activateWindow(pick);
+            return true;
+        }
+        return false;
+    }
+
     _giveFocusBack() {
         const previous = this._lastFocus;
         if (previous && previous !== this._window && previous.get_compositor_private())
@@ -416,6 +494,21 @@ export default class CoucouIslandExtension extends Extension {
     SetFocusableAsync([on], invocation) {
         this._ownedBy(invocation)?.setFocusable(on);
         invocation.return_value(null);
+    }
+
+    ActivateWindowOfAsync([pids, hint], invocation) {
+        const found = this._ownedBy(invocation)?.activateWindowOf(pids, hint) ?? false;
+        invocation.return_value(new GLib.Variant('(b)', [found]));
+    }
+
+    LastFocusedWindowAsync(_params, invocation) {
+        const answer = this._ownedBy(invocation)?.lastFocused() ?? NOTHING;
+        invocation.return_value(new GLib.Variant('(bss)', answer));
+    }
+
+    WindowAtAsync([x, y], invocation) {
+        const answer = this._ownedBy(invocation)?.windowAt(x, y) ?? NOTHING;
+        invocation.return_value(new GLib.Variant('(bss)', answer));
     }
 
     /** Only the app that registered may steer its island. */

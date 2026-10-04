@@ -126,6 +126,27 @@ pub fn shell_extension_status() -> super::ShellExtensionStatus {
     gnome_shell::status()
 }
 
+/// Brings the session's terminal (or editor) window to the front.
+pub fn activate_window_of(pids: &[u32], hint: &str) -> bool {
+    gnome_shell::active() && gnome_shell::activate_window_of(pids, hint)
+}
+
+/// (app, window title) the user was in before opening the island.
+pub fn last_focused_window() -> Option<(String, String)> {
+    if !gnome_shell::active() {
+        return None;
+    }
+    gnome_shell::last_focused_window()
+}
+
+/// (app, window title) under a point relative to the island. Main thread.
+pub fn window_at(x: f64, y: f64, done: impl FnOnce(Option<(String, String)>) + 'static) {
+    if !gnome_shell::active() {
+        return done(None);
+    }
+    gnome_shell::window_at(x, y, done)
+}
+
 pub fn shell_extension_install() -> Result<(), String> {
     gnome_shell::install()
 }

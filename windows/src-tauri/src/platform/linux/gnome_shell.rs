@@ -13,6 +13,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 
 use gtk::gio::{self, prelude::*};
 use gtk::glib::{self, ToVariant};
@@ -27,6 +28,10 @@ const PROTOCOL: u32 = 1;
 const WINDOW_TITLE: &str = "Coucou";
 
 use crate::platform::ShellEvent as Event;
+
+/// The same connection and owner as LINK, for questions asked from any
+/// thread (gio connections are thread-safe; LINK lives on the main thread).
+static REMOTE: Mutex<Option<(gio::DBusConnection, String)>> = Mutex::new(None);
 
 /// True while the extension looks after the island.
 static ACTIVE: AtomicBool = AtomicBool::new(false);
@@ -141,6 +146,7 @@ fn register(connection: gio::DBusConnection, owner: String) {
                     }
                 },
             );
+            *REMOTE.lock().unwrap() = Some((conn.clone(), owner.clone()));
             LINK.with(|l| *l.borrow_mut() = Some(Link { connection: conn, owner, subscription: Some(subscription) }));
             ACTIVE.store(true, Ordering::Relaxed);
             crate::log::line("GNOME extension: island registered");
@@ -157,6 +163,7 @@ fn register(connection: gio::DBusConnection, owner: String) {
 
 fn forget() {
     ACTIVE.store(false, Ordering::Relaxed);
+    *REMOTE.lock().unwrap() = None;
     LINK.with(|l| {
         if let Some(mut link) = l.borrow_mut().take() {
             if let Some(id) = link.subscription.take() {
@@ -222,6 +229,63 @@ pub fn set_placement(screen: &str) {
             send("SetPlacement", (screen.as_str(),).to_variant());
         }
     });
+}
+
+// ── Windows of other apps ─────────────────────────────────────────────────────
+
+/// A question to the extension, answered before returning. Any thread.
+fn ask(method: &str, args: Option<glib::Variant>, reply: &str) -> Option<glib::Variant> {
+    let (connection, owner) = REMOTE.lock().unwrap().clone()?;
+    connection
+        .call_sync(
+            Some(&owner),
+            OBJECT_PATH,
+            IFACE,
+            method,
+            args.as_ref(),
+            Some(glib::VariantTy::new(reply).ok()?),
+            gio::DBusCallFlags::NONE,
+            1500,
+            None::<&gio::Cancellable>,
+        )
+        .ok()
+}
+
+/// (app name, window title) from a `(bss)` answer.
+fn window_answer(v: glib::Variant) -> Option<(String, String)> {
+    let (found, app, title) = v.get::<(bool, String, String)>()?;
+    found.then_some((app, title))
+}
+
+/// Brings back the window of the nearest of `pids` that has one; a title
+/// containing `hint` wins among several. False when none has a window.
+pub fn activate_window_of(pids: &[u32], hint: &str) -> bool {
+    ask("ActivateWindowOf", Some((pids.to_vec(), hint).to_variant()), "(b)")
+        .and_then(|v| v.get::<(bool,)>())
+        .is_some_and(|(found,)| found)
+}
+
+/// The window the user was in before the island.
+pub fn last_focused_window() -> Option<(String, String)> {
+    ask("LastFocusedWindow", None, "(bss)").and_then(window_answer)
+}
+
+/// The window under a point relative to the island. Main thread: answers
+/// arrive on the main loop, so a pointer callback never waits on them.
+pub fn window_at(x: f64, y: f64, done: impl FnOnce(Option<(String, String)>) + 'static) {
+    let Some((connection, owner)) = REMOTE.lock().unwrap().clone() else { return done(None) };
+    connection.call(
+        Some(&owner),
+        OBJECT_PATH,
+        IFACE,
+        "WindowAt",
+        Some(&(x, y).to_variant()),
+        Some(glib::VariantTy::new("(bss)").unwrap()),
+        gio::DBusCallFlags::NONE,
+        1500,
+        None::<&gio::Cancellable>,
+        move |reply| done(reply.ok().and_then(window_answer)),
+    );
 }
 
 // ── Installing the extension ──────────────────────────────────────────────────

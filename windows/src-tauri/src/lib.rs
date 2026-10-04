@@ -182,6 +182,35 @@ fn open_in_vscode(path: Option<String>) -> bool {
     false
 }
 
+/// "Open terminal": the window of the terminal or editor the session runs in
+/// (GNOME extension), else the folder in VS Code as before. `pids` are the
+/// session's ancestor processes, nearest first, as the relay reported them.
+#[tauri::command]
+fn focus_terminal(pids: Vec<u32>, cwd: Option<String>) -> bool {
+    let hint = cwd
+        .as_deref()
+        .and_then(|c| std::path::Path::new(c).file_name())
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let pids: Vec<u32> = pids.into_iter().filter(|&p| p > 1).take(12).collect();
+    if !pids.is_empty() && platform::activate_window_of(&pids, &hint) {
+        return true;
+    }
+    open_in_vscode(cwd)
+}
+
+/// The window the user was in before the island, for the chat's context.
+#[tauri::command]
+fn window_context() -> Option<island::WindowContext> {
+    platform::last_focused_window().map(|(app_name, title)| island::WindowContext { app_name, title })
+}
+
+/// A press on Mochi that may turn into a drag onto another window.
+#[tauri::command]
+fn window_drag(on: bool) {
+    island::arm_window_drag(on);
+}
+
 #[tauri::command]
 fn quit_app(app: AppHandle) {
     app.exit(0);
@@ -522,6 +551,9 @@ pub fn run() {
             reposition,
             open_url,
             open_in_vscode,
+            focus_terminal,
+            window_context,
+            window_drag,
             quit_app,
             hooks_status,
             hooks_preview,

@@ -132,7 +132,17 @@ export class Island {
       },
       openTerminal: () => {
         const cwd = State.focusTask?.sessionCwd ?? null;
-        void Bridge.openInVSCode(cwd);
+        void Bridge.focusTerminal(State.focusTask?.sessionPids ?? [], cwd);
+      },
+      // The chat tab: what the user was looking at becomes the context, like
+      // WindowContextCapture on macOS — unless a file or a conversation is there.
+      captureWindow: () => {
+        if (State.droppedFile || State.chatHistory.length > 0) return;
+        void Bridge.windowContext().then((w) => {
+          if (!w || State.droppedFile || State.chatHistory.length > 0) return;
+          State.promptContext = { kind: "window", appName: w.appName, title: w.title };
+          State.notify();
+        });
       },
       // The ↗ button — same targets as openAgentTarget() on macOS.
       openTarget: () => {
@@ -560,6 +570,8 @@ export class Island {
       if (this.isBotHit(e.clientX, e.clientY)) {
         this.cancelBotHover();
         this.engine.slap();
+        // Held and dragged out, Mochi attaches the window it is dropped on.
+        void Bridge.windowDrag(true);
       }
     });
 
@@ -634,6 +646,28 @@ export class Island {
     }
 
     this.ensureRunning();
+  }
+
+  /** Mochi left the island with the button held (out), or came back (cancel). */
+  onWindowDrag(phase: "out" | "cancel") {
+    if (phase === "out") {
+      this.engine.triggerEmote("love");
+      Sound.play("love");
+    }
+  }
+
+  /** Mochi was dropped on a window: it becomes the subject of a new chat. */
+  attachWindow(w: { appName: string; title: string } | null) {
+    if (!w) return;
+    if (State.chatHistory.length > 0) {
+      State.chatHistory = [];
+      void Bridge.chatReset();
+    }
+    State.droppedFile = null;
+    State.promptContext = { kind: "window", appName: w.appName, title: w.title };
+    Sound.play("approve");
+    this.engine.triggerEmote("happy");
+    this.alert("prompt");
   }
 
   /**

@@ -56,7 +56,7 @@ impl Chat {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum ChatContext {
     File { name: String, path: String },
     Window { app_name: String, title: String, url: Option<String> },
@@ -256,7 +256,17 @@ fn base64(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::base64;
+    use super::{base64, ChatContext};
+
+    #[test]
+    fn contexts_read_the_way_the_page_writes_them() {
+        let window: ChatContext =
+            serde_json::from_str(r#"{"kind":"window","appName":"Firefox","title":"Docs"}"#).unwrap();
+        assert!(matches!(window, ChatContext::Window { ref app_name, url: None, .. } if app_name == "Firefox"));
+        let file: ChatContext =
+            serde_json::from_str(r#"{"kind":"file","name":"a.pdf","path":"/tmp/a.pdf"}"#).unwrap();
+        assert!(matches!(file, ChatContext::File { .. }));
+    }
 
     #[test]
     fn base64_matches_rfc4648_vectors() {

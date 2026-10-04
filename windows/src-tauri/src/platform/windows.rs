@@ -257,6 +257,18 @@ pub fn shell_extension_status() -> super::ShellExtensionStatus {
     Default::default()
 }
 
+pub fn activate_window_of(_pids: &[u32], _hint: &str) -> bool {
+    false
+}
+
+pub fn last_focused_window() -> Option<(String, String)> {
+    None
+}
+
+pub fn window_at(_x: f64, _y: f64, done: impl FnOnce(Option<(String, String)>) + 'static) {
+    done(None)
+}
+
 pub fn shell_extension_install() -> Result<(), String> {
     Err("Only on GNOME.".into())
 }

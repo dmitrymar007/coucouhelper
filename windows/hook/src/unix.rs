@@ -112,3 +112,47 @@ fn server_is_same_user(stream: &UnixStream) -> bool {
         && len as usize == std::mem::size_of::<libc::ucred>()
         && cred.uid == unsafe { libc::getuid() }
 }
+
+/// How many processes up the chain are worth reporting: Claude Code, a shell
+/// or two, a multiplexer, the terminal or editor.
+const MAX_ANCESTORS: usize = 12;
+
+/// Our parent, its parent, and so on, nearest first, stopping before init.
+pub fn ancestor_pids() -> Vec<u32> {
+    let mut pids = Vec::new();
+    let mut pid = std::os::unix::process::parent_id();
+    while pid > 1 && pids.len() < MAX_ANCESTORS {
+        pids.push(pid);
+        match std::fs::read_to_string(format!("/proc/{pid}/stat")).ok().and_then(|s| parent_of(&s)) {
+            Some(parent) if parent != pid => pid = parent,
+            _ => break,
+        }
+    }
+    pids
+}
+
+/// The parent pid in a /proc/<pid>/stat line. The command name in brackets
+/// may contain anything, spaces and brackets included, so read after its end.
+fn parent_of(stat: &str) -> Option<u32> {
+    let rest = &stat[stat.rfind(')')? + 1..];
+    rest.split_whitespace().nth(1)?.parse().ok()
+}
+
+#[cfg(test)]
+mod ancestry_tests {
+    use super::*;
+
+    #[test]
+    fn the_parent_is_read_after_the_command_name() {
+        assert_eq!(parent_of("1234 (bash) S 1200 1234 1234 0"), Some(1200));
+        assert_eq!(parent_of("77 (my (odd) name) R 42 77 77"), Some(42));
+        assert_eq!(parent_of("garbage"), None);
+    }
+
+    #[test]
+    fn our_own_ancestry_starts_with_our_parent() {
+        let pids = ancestor_pids();
+        assert_eq!(pids.first().copied(), Some(std::os::unix::process::parent_id()));
+        assert!(pids.len() <= MAX_ANCESTORS && !pids.contains(&1));
+    }
+}
