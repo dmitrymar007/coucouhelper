@@ -68,7 +68,17 @@ pub fn local_dir() -> PathBuf {
 /// plugin paths that vanish once Coucou quits. Give ours its own file.
 pub fn prepare_environment() {
     if shell_extension_wanted() {
-        let found = gnome_shell::on_bus();
+        let mut found = gnome_shell::on_bus();
+        // Started at login, Coucou can come up before GNOME has loaded its
+        // extensions. If GNOME is going to start ours, wait for it rather than
+        // settle for the Xwayland fallback for the whole run.
+        if !found && gnome_shell::expected() {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            while !found && std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(250));
+                found = gnome_shell::on_bus();
+            }
+        }
         SHELL_EXTENSION.store(found, Ordering::Relaxed);
         crate::log::line(format!("GNOME extension at launch: {}", if found { "running" } else { "not running" }));
     }

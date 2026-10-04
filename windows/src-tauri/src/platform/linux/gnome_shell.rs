@@ -95,6 +95,16 @@ pub fn on_bus() -> bool {
         .is_some_and(|(owned,)| owned)
 }
 
+/// Whether GNOME is going to start the extension: installed, switched on, and
+/// user extensions allowed. At login Coucou can start before GNOME has loaded
+/// its extensions, so this is what tells "not yet" from "not at all".
+pub fn expected() -> bool {
+    let Some(settings) = shell_settings() else { return false };
+    install_dir().join("metadata.json").is_file()
+        && enabled_list(&settings).iter().any(|u| u == UUID)
+        && !settings.boolean("disable-user-extensions")
+}
+
 /// Follows the extension for the rest of the run. Main thread only.
 pub fn start(on_event: impl Fn(Event) + 'static) {
     ON_EVENT.with(|h| *h.borrow_mut() = Some(Rc::new(on_event)));

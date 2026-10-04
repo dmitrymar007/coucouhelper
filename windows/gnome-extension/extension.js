@@ -344,10 +344,29 @@ class Island {
         return false;
     }
 
+    /**
+     * Hands the keyboard to a window the user can see. The island is sticky
+     * and above, so Mutter picks it whenever it looks for a window to focus:
+     * after a minimize, a close or a workspace switch. Going back to the last
+     * window then would undo what the user just did — unminimize it, or pull
+     * them back to the workspace they left — so the last window only gets the
+     * focus back while it is on this workspace and showing; otherwise the
+     * window Mutter would have picked, the island aside; otherwise none.
+     * focus(), not activate(): nothing is raised, unminimized or switched to.
+     */
     _giveFocusBack() {
+        const time = global.get_current_time();
+        const workspace = global.workspace_manager.get_active_workspace();
+        const visible = w => isUserWindow(w) && w.get_compositor_private() && !w.minimized &&
+            (w.is_on_all_workspaces() || w.get_workspace() === workspace);
         const previous = this._lastFocus;
-        if (previous && previous !== this._window && previous.get_compositor_private())
-            previous.activate(global.get_current_time());
+        const target = visible(previous)
+            ? previous
+            : global.display.sort_windows_by_stacking(workspace.list_windows().filter(visible)).pop();
+        if (target)
+            target.focus(time);
+        else
+            global.display.unset_input_focus(time);
     }
 
     setTracking(on) {

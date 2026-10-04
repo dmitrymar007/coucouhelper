@@ -386,7 +386,11 @@ struct ChatSessionRow {
 /// The Send button of the mail view, and nothing else.
 #[tauri::command]
 async fn mail_send(to: String, subject: String, body: String, file: Option<String>) -> Result<mail::Sent, String> {
-    mail::send(to, subject, body, file).await
+    let result = mail::send(to, subject, body, file).await;
+    if let Err(err) = &result {
+        log::line(format!("mail: not sent — {err}"));
+    }
+    result
 }
 
 /// Copies a dropped file into the inbox and reports its name back.
