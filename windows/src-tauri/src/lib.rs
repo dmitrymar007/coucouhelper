@@ -8,6 +8,7 @@ mod hooks;
 mod integrations;
 mod island;
 mod log;
+mod mail;
 mod pipe;
 mod platform;
 mod secrets;
@@ -353,6 +354,12 @@ struct ChatSessionRow {
     current: bool,
 }
 
+/// The Send button of the mail view, and nothing else.
+#[tauri::command]
+async fn mail_send(to: String, subject: String, body: String, file: Option<String>) -> Result<mail::Sent, String> {
+    mail::send(to, subject, body, file).await
+}
+
 /// Copies a dropped file into the inbox and reports its name back.
 #[tauri::command]
 fn ingest_file(path: String) -> Result<DroppedFile, String> {
@@ -536,6 +543,7 @@ pub fn run() {
             shell_extension_remove,
             shell_hint_seen,
             ingest_file,
+            mail_send,
             secret_present,
             secret_set,
             secret_clear,

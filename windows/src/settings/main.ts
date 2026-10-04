@@ -479,7 +479,11 @@ const INTEGRATIONS: IntegrationDef[] = [
       { key: "n8n-api-key", label: "API key", placeholder: "…", secret: true },
     ] },
   { id: "integration_resend", name: "Resend", color: "#22C55E",
-    fields: [{ key: "resend-api-key", label: "API key", placeholder: "re_…", secret: true }] },
+    fields: [
+      { key: "resend-api-key", label: "API key", placeholder: "re_…", secret: true },
+      // Sending a dropped file by email goes out from this address.
+      { key: "resend-from", label: "Sender", placeholder: "you@yourdomain.com", secret: false },
+    ] },
   { id: "integration_notion", name: "Notion", color: "#8C8C8C",
     fields: [{ key: "notion-api-key", label: "Integration token", placeholder: "ntn_…", secret: true }] },
   { id: "integration_calcom", name: "Cal.com", color: "#C9956A",
@@ -636,7 +640,7 @@ async function main() {
 
   const keys = [
     "stripe-api-key", "github-token", "vercel-token",
-    "n8n-url", "n8n-api-key", "resend-api-key", "notion-api-key", "calcom-api-key",
+    "n8n-url", "n8n-api-key", "resend-api-key", "resend-from", "notion-api-key", "calcom-api-key",
   ];
   const present: Record<string, boolean> = {};
   for (const k of keys) present[k] = (await Bridge.secretPresent(k)) ?? false;

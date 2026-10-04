@@ -255,6 +255,22 @@ pub fn open_url(url: &str) {
     let _ = Command::new("xdg-open").arg(url).spawn();
 }
 
+/// The user's mail app with the email written and the file attached, via
+/// xdg-email. They send it themselves. No shell: every part is one argument.
+pub fn compose_email(to: &str, subject: &str, body: &str, attachment: Option<&Path>) -> Result<(), String> {
+    let exe = find_on_path("xdg-email").ok_or("No mail app helper (xdg-email) found. Set up Resend in Settings instead.")?;
+    let mut cmd = Command::new(exe);
+    cmd.arg("--subject").arg(subject);
+    if !body.is_empty() {
+        cmd.arg("--body").arg(body);
+    }
+    if let Some(file) = attachment {
+        cmd.arg("--attach").arg(file);
+    }
+    cmd.arg(to);
+    cmd.spawn().map(|_| ()).map_err(|e| format!("Could not open the mail app: {e}"))
+}
+
 pub fn reveal_folder(path: &str) {
     let _ = Command::new("xdg-open").arg(path).spawn();
 }

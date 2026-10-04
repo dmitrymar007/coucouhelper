@@ -115,6 +115,9 @@ export const Bridge = {
   chatSessions: () => call<ChatSession[]>("chat_sessions"),
   /** Picks one of them up again; its messages arrive as `chat-restored`. */
   chatResume: (session: string) => callOrThrow<number>("chat_resume", { session }),
+  /** The mail view's Send button: through Resend, or into the user's mail app. */
+  mailSend: (to: string, subject: string, body: string, file: string | null) =>
+    callOrThrow<"resend" | "mailApp">("mail_send", { to, subject, body, file }),
   /** Copies a dropped file into the inbox. */
   ingestFile: (path: string) => callOrThrow<DroppedFile>("ingest_file", { path }),
   /** Only ever tells you whether a key exists — never its value. */

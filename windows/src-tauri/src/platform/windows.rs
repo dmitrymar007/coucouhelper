@@ -243,6 +243,16 @@ pub fn shell_extension_start(_on_event: impl Fn(super::ShellEvent) + 'static) {}
 
 pub fn pointer_watch(_on: bool) {}
 
+/// No mail app hand-off on Windows yet: Resend only.
+pub fn compose_email(
+    _to: &str,
+    _subject: &str,
+    _body: &str,
+    _attachment: Option<&std::path::Path>,
+) -> Result<(), String> {
+    Err("Set up Resend in Settings to send email from Coucou.".into())
+}
+
 pub fn shell_extension_status() -> super::ShellExtensionStatus {
     Default::default()
 }
