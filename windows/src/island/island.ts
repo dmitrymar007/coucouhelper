@@ -15,7 +15,7 @@ import { BotEngine, hexToRGB } from "../mochi/engine";
 import { Greeting } from "../mochi/greeting";
 import { createMiniBot, pruneMiniBots, syncMiniBotStates, tickMiniBots } from "../mochi/minibots";
 import { UploadCanvas } from "../upload/canvas";
-import { USC, UploadSeq } from "../upload/sequence";
+import { USC, UploadSeq, uploadProgressCurve } from "../upload/sequence";
 import { buildHeader, buildViews, type ViewActions, type ViewHost } from "../views/views";
 import { h } from "../views/dom";
 import { IslandStateMachine } from "./fsm";
@@ -297,6 +297,13 @@ export class Island {
     }
     if (mode !== "expanded") {
       this.engine.resetMorph();
+      // Folded before the bar was through: the file is in, so the island
+      // reopens on what to do with it rather than on a stalled bar.
+      if (State.view === "uploading" && UploadSeq.dropped) {
+        State.uploadProgress = 1;
+        State.view = "choose";
+        void Bridge.log("upload: island folded mid-upload — reopens on choose");
+      }
       // Nothing can be seen of the sequence once the island is shut, and leaving
       // it running would keep the frame loop awake — the island must cost
       // nothing while hidden.
@@ -458,6 +465,12 @@ export class Island {
     if (since == null) return;
     const dur = State.uploadDuration;
     const p = Math.max(0, Math.min(1, (since - PRE_PROGRESS) / dur));
+    // The bar's own figure, for the percentage and the bar of the uploading view.
+    const progress = uploadProgressCurve(p);
+    if (Math.round(progress * 100) !== Math.round(State.uploadProgress * 100)) {
+      State.uploadProgress = progress;
+      State.notify();
+    }
 
     const tens = Math.floor(p * 10);
     if (tens > this.uploadTens && tens < 10) {

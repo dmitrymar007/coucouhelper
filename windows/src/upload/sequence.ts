@@ -276,6 +276,10 @@ class UploadSequence {
   exitZone() {}
 
   performDrop(uploadDuration: number) {
+    // A drop always plays the timeline, even when the sequence was switched
+    // off on the way (the island folded during the drag, or the enter never
+    // came): without it the upload view sat at 0 % for good.
+    if (!this.isActive) this.enterZone(this.cursorX, this.cursorY);
     this.uploadDuration = uploadDuration;
     this.dropWall = this.now();
     // Restart the canonical post-drop timeline however long the user hovered.
