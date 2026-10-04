@@ -220,7 +220,7 @@ export class Island {
           : null;
         this.setView("prompt");
       },
-      cancel: () => this.setView(State.defaultView()),
+      mail: () => this.setView("mail"),
     });
 
     this.clipEl = h(

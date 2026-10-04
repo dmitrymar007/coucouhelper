@@ -28,6 +28,7 @@ use tauri::{AppHandle, WebviewWindow};
 use super::{home_dir, LocalTime, ShellEvent};
 
 mod gnome_shell;
+mod mail_app;
 
 /// File name of the Claude Code relay.
 pub const HOOK_EXE: &str = "coucou-hook";
@@ -289,13 +290,30 @@ pub fn open_url(url: &str) {
 /// The user's mail app with the email written and the file attached, via
 /// xdg-email. They send it themselves. No shell: every part is one argument.
 pub fn compose_email(to: &str, subject: &str, body: &str, attachment: Option<&Path>) -> Result<(), String> {
+    let app = mail_app::find();
+    // The mail app must be able to read the file: a sandboxed one gets a copy
+    // in its own folder (see mail_app.rs).
+    let sandbox = app.as_ref().map_or(mail_app::Sandbox::None, |a| a.sandbox.clone());
+    let attachment = attachment.map(|f| mail_app::stage(f, &sandbox)).transpose()?;
+
+    if let Some(app) = app.filter(|a| a.thunderbird) {
+        let (program, args) = app.exec.split_first().ok_or("No mail app.")?;
+        Command::new(program)
+            .args(args)
+            .arg("-compose")
+            .arg(mail_app::thunderbird_compose(to, subject, body, attachment.as_deref()))
+            .spawn()
+            .map_err(|e| format!("Could not open Thunderbird: {e}"))?;
+        return Ok(());
+    }
+
     let exe = find_on_path("xdg-email").ok_or("No mail app helper (xdg-email) found. Set up Resend in Settings instead.")?;
     let mut cmd = Command::new(exe);
     cmd.arg("--subject").arg(subject);
     if !body.is_empty() {
         cmd.arg("--body").arg(body);
     }
-    if let Some(file) = attachment {
+    if let Some(file) = &attachment {
         cmd.arg("--attach").arg(file);
     }
     cmd.arg(to);

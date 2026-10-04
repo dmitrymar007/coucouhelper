@@ -104,6 +104,12 @@ body {
   opacity: 1;
 }
 
+/* Its hit areas catch clicks only while the canvas is on screen: left behind,
+   they sat invisibly over the choose card's own buttons. */
+#upload-layer:not(.on) .upload-hit {
+  pointer-events: none;
+}
+
 #upload-canvas {
   position: absolute;
   inset: 0;

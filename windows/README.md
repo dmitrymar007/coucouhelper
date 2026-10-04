@@ -239,8 +239,12 @@ What changes on Linux:
 - **Files**: preferences in `~/.config/coucou/`, the log at
   `~/.local/share/coucou/coucou.log`.
 - **Sending a dropped file by email** goes through Resend when its API key and
-  sender address are set, as on the Mac; otherwise your mail app opens
-  (`xdg-email`) with the email written and the file attached, and you send it.
+  sender address are set, as on the Mac; otherwise your mail app opens with
+  the email written and the file attached, and you send it. Thunderbird is
+  called directly (xdg-email mangles file names with spaces for it), and a
+  mail app from a snap or a flatpak gets a copy of the file in its own folder
+  (`~/snap/<name>/common/coucou-mail`, `~/.var/app/<id>/cache/coucou-mail`),
+  since it cannot read Coucou's hidden inbox; copies go after a day.
 - **With the GNOME extension**, three more things work as on the Mac:
   "Open terminal" brings back the very terminal or editor window the session
   runs in (the relay reports the session's parent processes); the chat takes

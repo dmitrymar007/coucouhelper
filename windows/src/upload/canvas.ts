@@ -60,8 +60,8 @@ function text(
 export interface UploadCanvasActions {
   /** Primary button — hand the file to the chat. */
   ask(): void;
-  /** Secondary button. */
-  cancel(): void;
+  /** Secondary button — write an email with the file attached. */
+  mail(): void;
 }
 
 export class UploadCanvas {
@@ -91,7 +91,7 @@ export class UploadCanvas {
     };
     this.overlay = document.createElement("div");
     this.overlay.id = "upload-overlay";
-    this.overlay.append(mk(114, 168, actions.ask), mk(290, 120, actions.cancel));
+    this.overlay.append(mk(114, 168, actions.ask), mk(290, 120, actions.mail));
 
     this.el = document.createElement("div");
     this.el.id = "upload-layer";
@@ -284,7 +284,7 @@ export class UploadCanvas {
     ctx.fillStyle = "rgba(255,255,255,0.09)";
     rr(ctx, 290, 113, 120, 26, 13);
     ctx.fill();
-    text(ctx, "Cancel", 350, 126, `500 12.5px ${FONT}`, "#F1F2F4", "center");
+    text(ctx, "Send by email", 350, 126, `500 12.5px ${FONT}`, "#F1F2F4", "center");
     ctx.restore();
   }
 

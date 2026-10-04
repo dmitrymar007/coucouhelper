@@ -99,11 +99,6 @@ export function buildChoose(actions: ViewActions): ViewHost {
       text: "Send by email",
       onclick: () => actions.setView("mail"),
     }),
-    h("button", {
-      class: "btn secondary",
-      text: "Cancel",
-      onclick: () => actions.setView(State.defaultView()),
-    }),
   );
   const el = h(
     "div",

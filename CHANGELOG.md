@@ -2,6 +2,7 @@
 
 ## Unreleased (coucouhelper, Linux)
 
+- Send by email works to the end: the file is really attached in Thunderbird (snap included) and other mail apps, and the card after a drop shows Ask a question and Send by email side by side instead of one long button.
 - opencode sessions on the island: Settings → opencode → Install plugin. Each session gets its own pill (prompt, tools, done, failed) and its permission requests an approval card with Allow and Deny; answering in opencode first takes the card down.
 - An approval card now goes away as soon as the question is answered in the terminal, instead of staying up until it times out.
 - The chat can answer through opencode: Settings → Chat → Answers from → opencode, then any model from the providers set up in opencode (OpenCode Zen, OpenRouter, OpenAI-compatible endpoints…). Web search only, as with Claude Code; the clock lists earlier opencode chats to continue.
