@@ -246,9 +246,9 @@ function chatSection(): HTMLElement {
   const resumeBtn = h("button", { text: "Continue last chat" });
   const feedback = h("div", {});
 
+  const idleLabel = h("label", { text: "Stop Claude Code" });
   const claudeRows = [
     h("div", { class: "row" }, h("label", { text: "Model" }), model),
-    h("div", { class: "row" }, h("label", { text: "Stop Claude Code" }), idle),
     h("div", {
       class: "hint",
       text:
@@ -262,12 +262,14 @@ function chatSection(): HTMLElement {
     h("div", {
       class: "hint",
       text:
-        "Each message runs opencode with the providers you set up in it (opencode auth login), as its own agent with web search only: " +
-        "no access to your files, no edits, no commands, no MCP tools, no plugins. Your opencode config is read, never changed. " +
+        "The chat runs opencode in the background with the providers you set up in it (opencode auth login), as its own agent " +
+        "with web search only: no access to your files, no edits, no commands, no MCP tools, no plugins. It starts with your first " +
+        "message and keeps running so the next answers come quickly. Your opencode config is read, never changed. " +
         "Conversations are saved by opencode, like its own sessions.",
     }),
   ];
   const sharedRows = [
+    h("div", { class: "row" }, idleLabel, idle),
     h("div", { class: "row" }, h("label", { text: "Chat process" }), running, stopBtn),
     h("div", { class: "row" }, h("label", { text: "History" }), resumeBtn),
   ];
@@ -312,6 +314,7 @@ function chatSection(): HTMLElement {
     for (const row of claudeRows) row.style.display = which === "claude-code" ? "" : "none";
     for (const row of opencodeRows) row.style.display = which === "opencode" ? "" : "none";
     for (const row of sharedRows) row.style.display = which === "api-key" ? "none" : "";
+    idleLabel.textContent = which === "opencode" ? "Stop opencode" : "Stop Claude Code";
     if (which === "api-key") dot.style.background = "#22c55e";
     else if (which === "opencode") void refreshOpencode();
     else void refreshClaude();

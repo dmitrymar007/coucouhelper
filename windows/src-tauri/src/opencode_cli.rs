@@ -1,25 +1,32 @@
-// Chat through opencode (`opencode run`) and whichever providers the user has
-// set up in it: OpenCode Zen, OpenRouter, any OpenAI-compatible endpoint…
+// Chat through opencode and whichever providers the user has set up in it:
+// OpenCode Zen, OpenRouter, any OpenAI-compatible endpoint…
 //
-// One `opencode run` per turn: the message goes in on stdin, the answer comes
-// back as JSON events on stdout, and `--session` carries the conversation on.
-// opencode saves every session in its own database, so the history list and
-// "Continue" work from there.
+// Like the Claude Code chat: one hidden `opencode serve`, started with the
+// first message and kept alive, so only the first message pays for the start.
+// It listens on 127.0.0.1 only, behind a random password. Each turn listens to
+// its event stream, sends the message, and streams the answer's text to the
+// island word by word until the session is idle again. It is stopped on demand,
+// after a while idle, and with the app.
 //
 // It runs as harmless as the Claude Code chat: its own agent, defined through
 // OPENCODE_CONFIG_CONTENT, with web search and no other tool — no file access,
 // no edits, no commands, no MCP tools — no external plugins (`--pure`), no
 // project config, nothing from ~/.claude. The user's own opencode config is
 // read for providers and models, never written.
+//
+// opencode saves every session in its own database, so the history list and
+// "Continue" work from there, with the CLI, whether the server runs or not.
 
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::Serialize;
 use serde_json::{json, Value};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::process::{Child, Command};
 
 use crate::claude::{self, ChatContext, ChatReply};
@@ -103,34 +110,6 @@ pub fn is_session_id(id: &str) -> bool {
 
 // ── One turn ──────────────────────────────────────────────────────────────────
 
-/// One stdout line, reduced to what matters here.
-#[derive(Debug, PartialEq)]
-pub enum Event {
-    Text(String),
-    Tool(String),
-    Error(String),
-    Ignored,
-}
-
-pub fn parse_event(line: &str) -> (Event, Option<String>) {
-    let Ok(v) = serde_json::from_str::<Value>(line) else { return (Event::Ignored, None) };
-    let session = v["sessionID"].as_str().filter(|s| is_session_id(s)).map(str::to_string);
-    let event = match v["type"].as_str() {
-        Some("text") => match v["part"]["text"].as_str().map(str::trim) {
-            Some(t) if !t.is_empty() => Event::Text(t.to_string()),
-            _ => Event::Ignored,
-        },
-        Some("tool_use") => Event::Tool(v["part"]["tool"].as_str().unwrap_or("tool").to_string()),
-        Some("error") => {
-            let e = &v["error"];
-            let message = e["data"]["message"].as_str().or(e["message"].as_str()).or(e["name"].as_str());
-            Event::Error(message.unwrap_or("opencode could not answer.").to_string())
-        }
-        _ => Event::Ignored,
-    };
-    (event, session)
-}
-
 /// What the island shows when the turn failed: opencode's own words, unless
 /// they mean no provider is set up for the model.
 pub fn friendly_error(raw: &str) -> String {
@@ -153,7 +132,7 @@ pub fn friendly_error(raw: &str) -> String {
 }
 
 /// What the first message says besides the question. A dropped file travels
-/// as an attachment (`--file`); its name and the window go in the text.
+/// as a file part; its name and the window go in the text.
 fn first_message(query: &str, context: Option<&ChatContext>) -> (String, Option<String>) {
     match context {
         Some(ChatContext::File { name, path }) => (format!("File: {name}\n\n{query}"), Some(path.clone())),
@@ -168,56 +147,240 @@ fn first_message(query: &str, context: Option<&ChatContext>) -> (String, Option<
     }
 }
 
-/// Command line of one turn. Values go after `=`, so none can pass for a flag.
-pub fn args(model: &str, session: Option<&str>, title: &str, file: Option<&str>) -> Vec<String> {
-    let mut a: Vec<String> =
-        ["run", "--pure", "--format", "json", "--agent", AGENT].iter().map(|s| s.to_string()).collect();
-    if !model.is_empty() {
-        a.push(format!("--model={model}"));
+/// "provider/model" → opencode's model object. The model part may itself
+/// contain slashes ("openrouter/minimax/minimax-m3:free").
+pub fn model_ref(model: &str) -> Option<Value> {
+    let (provider, id) = model.split_once('/')?;
+    (!provider.is_empty() && !id.is_empty()).then(|| json!({ "providerID": provider, "modelID": id }))
+}
+
+fn mime_of(path: &str) -> &'static str {
+    let ext = std::path::Path::new(path).extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+    match ext.as_str() {
+        "pdf" => "application/pdf",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        _ => "text/plain",
     }
-    match session {
-        Some(id) => a.push(format!("--session={id}")),
-        None => a.push(format!("--title={title}")),
+}
+
+/// The body of one `prompt_async`.
+pub fn prompt_body(model: &str, text: &str, file: Option<&str>) -> Value {
+    let mut parts = Vec::new();
+    if let Some(path) = file {
+        let name = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        parts.push(json!({ "type": "file", "mime": mime_of(path), "filename": name, "url": format!("file://{path}") }));
     }
-    if let Some(file) = file {
-        a.push(format!("--file={file}"));
+    parts.push(json!({ "type": "text", "text": text }));
+    let mut body = json!({ "agent": AGENT, "parts": parts });
+    if let Some(m) = model_ref(model) {
+        body["model"] = m;
     }
-    a
+    body
+}
+
+/// One turn's view of the event stream: which parts are the answer's text,
+/// which are tools, and when the session is done.
+#[derive(Default)]
+pub struct TurnState {
+    session: String,
+    assistant: HashSet<String>,
+    kinds: HashMap<String, String>,
+    /// The answer's text parts, in order, with their text so far.
+    texts: Vec<(String, String)>,
+    busy: bool,
+    pub done: bool,
+    pub error: Option<String>,
+}
+
+impl TurnState {
+    pub fn new(session: &str) -> Self {
+        Self { session: session.to_string(), ..Default::default() }
+    }
+
+    fn mine(&self, id: Option<&str>) -> bool {
+        id == Some(self.session.as_str())
+    }
+
+    fn has_text(&self) -> bool {
+        self.texts.iter().any(|(_, t)| !t.is_empty())
+    }
+
+    /// One event from `/event`; returns what the island should show of it.
+    pub fn feed(&mut self, event: &Value) -> Vec<StreamUpdate> {
+        let p = &event["properties"];
+        match event["type"].as_str().unwrap_or("") {
+            "message.updated" => {
+                let info = &p["info"];
+                if self.mine(info["sessionID"].as_str()) && info["role"] == "assistant" {
+                    if let Some(id) = info["id"].as_str() {
+                        self.assistant.insert(id.to_string());
+                    }
+                    if let Some(err) = info.get("error").filter(|e| e.is_object()) {
+                        self.error = Some(error_text(err));
+                    }
+                }
+                vec![]
+            }
+            "message.part.updated" => {
+                let part = &p["part"];
+                if !self.mine(part["sessionID"].as_str())
+                    || !part["messageID"].as_str().is_some_and(|m| self.assistant.contains(m))
+                {
+                    return vec![];
+                }
+                let (Some(id), Some(kind)) = (part["id"].as_str(), part["type"].as_str()) else { return vec![] };
+                let new = self.kinds.insert(id.to_string(), kind.to_string()).is_none();
+                match kind {
+                    "text" => {
+                        let text = part["text"].as_str().unwrap_or("").to_string();
+                        match self.texts.iter_mut().find(|(pid, _)| pid == id) {
+                            Some((_, t)) => {
+                                // The part's final text is the truth; deltas were the preview.
+                                if !text.is_empty() {
+                                    *t = text;
+                                }
+                            }
+                            None => self.texts.push((id.to_string(), text)),
+                        }
+                        vec![]
+                    }
+                    "tool" if new => vec![StreamUpdate::Tool { name: part["tool"].as_str().unwrap_or("tool").to_string() }],
+                    _ => vec![],
+                }
+            }
+            "message.part.delta" => {
+                if !self.mine(p["sessionID"].as_str()) || p["field"] != "text" {
+                    return vec![];
+                }
+                let (Some(id), Some(delta)) = (p["partID"].as_str(), p["delta"].as_str()) else { return vec![] };
+                if self.kinds.get(id).map(String::as_str) != Some("text") || delta.is_empty() {
+                    return vec![];
+                }
+                let others_have_text = self.texts.iter().any(|(pid, t)| pid != id && !t.is_empty());
+                let Some((_, t)) = self.texts.iter_mut().find(|(pid, _)| pid == id) else { return vec![] };
+                let mut piece = String::new();
+                if t.is_empty() && others_have_text {
+                    piece.push_str("\n\n");
+                }
+                piece.push_str(delta);
+                t.push_str(delta);
+                vec![StreamUpdate::Text { text: piece }]
+            }
+            "session.status" => {
+                if self.mine(p["sessionID"].as_str()) {
+                    match p["status"]["type"].as_str() {
+                        Some("busy") => self.busy = true,
+                        Some("idle") if self.busy || self.error.is_some() || self.has_text() => self.done = true,
+                        _ => {}
+                    }
+                }
+                vec![]
+            }
+            "session.idle" => {
+                if self.mine(p["sessionID"].as_str()) && (self.busy || self.error.is_some() || self.has_text()) {
+                    self.done = true;
+                }
+                vec![]
+            }
+            "session.error" => {
+                if self.mine(p["sessionID"].as_str()) || p["sessionID"].is_null() {
+                    if let Some(err) = p.get("error").filter(|e| e.is_object()) {
+                        self.error = Some(error_text(err));
+                    }
+                }
+                vec![]
+            }
+            _ => vec![],
+        }
+    }
+
+    /// The whole answer: the text parts, one paragraph apart.
+    pub fn answer(&self) -> String {
+        self.texts
+            .iter()
+            .map(|(_, t)| t.trim())
+            .filter(|t| !t.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    }
+}
+
+fn error_text(err: &Value) -> String {
+    if err["name"] == "MessageAbortedError" {
+        return "Stopped.".into();
+    }
+    err["data"]["message"]
+        .as_str()
+        .or(err["message"].as_str())
+        .or(err["name"].as_str())
+        .unwrap_or("opencode could not answer.")
+        .to_string()
+}
+
+/// Splits an event-stream buffer into complete events' JSON, leaving any
+/// unfinished one in `buf`.
+pub fn take_events(buf: &mut Vec<u8>) -> Vec<Value> {
+    let mut out = Vec::new();
+    while let Some(end) = buf.windows(2).position(|w| w == b"\n\n") {
+        let frame: Vec<u8> = buf.drain(..end + 2).collect();
+        let frame = String::from_utf8_lossy(&frame);
+        let data: String = frame
+            .lines()
+            .filter_map(|l| l.strip_prefix("data:"))
+            .map(str::trim_start)
+            .collect::<Vec<_>>()
+            .join("\n");
+        if let Ok(v) = serde_json::from_str::<Value>(&data) {
+            out.push(v);
+        }
+    }
+    out
+}
+
+/// The running server: where it listens and the password it wants.
+#[derive(Clone)]
+struct Server {
+    url: String,
+    password: String,
+    stderr: Arc<Mutex<String>>,
 }
 
 #[derive(Default)]
 pub struct OpenCodeChat {
     /// Held for a whole turn: one turn at a time.
     turn: tokio::sync::Mutex<()>,
-    /// The turn's process, so it can be stopped midway.
     child: Mutex<Option<Child>>,
+    server: Mutex<Option<Server>>,
     session: Mutex<Option<String>>,
+    /// Bumped by every turn and stop; an idle timer only fires if it is unchanged.
+    generation: AtomicU64,
 }
 
 impl OpenCodeChat {
-    pub fn status(&self) -> claude_cli::CliStatus {
-        let running = self
-            .child
-            .lock()
-            .unwrap()
-            .as_mut()
-            .is_some_and(|c| matches!(c.try_wait(), Ok(None)));
-        claude_cli::CliStatus { running, session_id: self.session.lock().unwrap().clone() }
+    fn alive(&self) -> bool {
+        self.child.lock().unwrap().as_mut().is_some_and(|c| matches!(c.try_wait(), Ok(None)))
     }
 
-    /// Stops the answer being written, if any. The conversation goes on with
-    /// the next message.
+    pub fn status(&self) -> claude_cli::CliStatus {
+        claude_cli::CliStatus { running: self.alive(), session_id: self.session.lock().unwrap().clone() }
+    }
+
+    /// Ends the server, and with it any answer being written. The
+    /// conversation goes on with the next message, on a new server.
     pub fn stop(&self) {
+        self.generation.fetch_add(1, Ordering::Relaxed);
+        *self.server.lock().unwrap() = None;
         if let Some(mut child) = self.child.lock().unwrap().take() {
-            if matches!(child.try_wait(), Ok(None)) {
-                let _ = child.start_kill();
-                crate::log::line("chat: opencode stopped");
-            }
+            let _ = child.start_kill();
+            crate::log::line("chat: opencode stopped");
         }
     }
 
+    /// A new conversation. The server stays: it serves any session.
     pub fn reset(&self) {
-        self.stop();
         *self.session.lock().unwrap() = None;
     }
 
@@ -225,13 +388,96 @@ impl OpenCodeChat {
     /// far, for the island to show.
     pub async fn resume(&self, id: &str) -> Result<Vec<TranscriptMessage>, String> {
         let messages = transcript(id).await?;
-        self.stop();
         *self.session.lock().unwrap() = Some(id.to_string());
         Ok(messages)
     }
 
-    /// One chat turn. `on_update` gets each piece of the answer as it is
-    /// written, and the tools it uses.
+    /// Stops the server after `idle` without a new turn. Zero: never.
+    pub fn stop_when_idle(self: &Arc<Self>, idle: Duration) {
+        if idle.is_zero() {
+            return;
+        }
+        let me = self.clone();
+        let generation = self.generation.load(Ordering::Relaxed);
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(idle).await;
+            if me.generation.load(Ordering::Relaxed) == generation {
+                crate::log::line("chat: opencode idle");
+                me.stop();
+            }
+        });
+    }
+
+    async fn server(&self) -> Result<Server, String> {
+        if self.alive() {
+            if let Some(server) = self.server.lock().unwrap().clone() {
+                return Ok(server);
+            }
+        }
+        self.stop();
+        let exe = find_opencode().ok_or(
+            "opencode is not installed: `opencode` is nowhere on PATH. Install it, or pick another chat backend in Settings.",
+        )?;
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .and_then(|l| l.local_addr())
+            .map(|a| a.port())
+            .map_err(|e| format!("No free port for opencode: {e}"))?;
+        let password = claude_cli::new_session_id();
+
+        let mut cmd = command(&exe);
+        cmd.args(["serve", "--pure", "--hostname", "127.0.0.1", &format!("--port={port}")])
+            .env("OPENCODE_SERVER_PASSWORD", &password);
+        let mut child = cmd.spawn().map_err(|e| format!("Could not start opencode: {e}"))?;
+        let stdout = child.stdout.take().ok_or("no stdout")?;
+        let mut stderr_pipe = child.stderr.take().ok_or("no stderr")?;
+        *self.child.lock().unwrap() = Some(child);
+
+        let stderr = Arc::new(Mutex::new(String::new()));
+        let sink = stderr.clone();
+        tauri::async_runtime::spawn(async move {
+            let mut buf = [0u8; 2048];
+            while let Ok(n) = stderr_pipe.read(&mut buf).await {
+                if n == 0 {
+                    break;
+                }
+                let mut tail = sink.lock().unwrap();
+                tail.push_str(&String::from_utf8_lossy(&buf[..n]));
+                if tail.len() > 4096 {
+                    let cut = tail.len() - 4096;
+                    let cut = (cut..tail.len()).find(|&i| tail.is_char_boundary(i)).unwrap_or(0);
+                    tail.drain(..cut);
+                }
+            }
+        });
+
+        // "opencode server listening on http://127.0.0.1:PORT", then nothing
+        // that matters: the rest of stdout is drained so it never blocks.
+        let mut lines = BufReader::new(stdout).lines();
+        let url = tokio::time::timeout(Duration::from_secs(30), async {
+            while let Ok(Some(line)) = lines.next_line().await {
+                if let Some(at) = line.find("http://") {
+                    return Some(line[at..].trim().to_string());
+                }
+            }
+            None
+        })
+        .await
+        .ok()
+        .flatten();
+        tauri::async_runtime::spawn(async move { while let Ok(Some(_)) = lines.next_line().await {} });
+        let Some(url) = url else {
+            let tail = stderr.lock().unwrap().clone();
+            self.stop();
+            return Err(friendly_error(if tail.trim().is_empty() { "opencode did not start." } else { &tail }));
+        };
+        crate::log::line("chat: opencode started");
+        let server = Server { url, password, stderr };
+        *self.server.lock().unwrap() = Some(server.clone());
+        Ok(server)
+    }
+
+    /// One chat turn. `on_update` gets the answer as it is written, and the
+    /// tools it uses.
     pub async fn send(
         &self,
         model: &str,
@@ -240,94 +486,121 @@ impl OpenCodeChat {
         on_update: impl Fn(StreamUpdate),
     ) -> Result<(ChatReply, String), String> {
         let _turn = self.turn.lock().await;
-        let exe = find_opencode().ok_or(
-            "opencode is not installed: `opencode` is nowhere on PATH. Install it, or pick another chat backend in Settings.",
-        )?;
+        self.generation.fetch_add(1, Ordering::Relaxed);
         platform::ensure_private_dir(&claude_cli::work_dir()).map_err(|e| format!("Chat folder: {e}"))?;
-
-        let session = self.session.lock().unwrap().clone();
-        let (message, file) = if session.is_none() {
-            first_message(&query, context.as_ref())
-        } else {
-            (query.clone(), None)
-        };
-        let title: String = query.lines().next().unwrap_or("").chars().take(80).collect();
-
-        let mut cmd = command(&exe);
-        cmd.args(args(model, session.as_deref(), &title, file.as_deref())).stdin(Stdio::piped());
-        let mut child = cmd.spawn().map_err(|e| format!("Could not start opencode: {e}"))?;
-        let mut stdin = child.stdin.take().ok_or("no stdin")?;
-        let stdout = child.stdout.take().ok_or("no stdout")?;
-        let mut stderr_pipe = child.stderr.take().ok_or("no stderr")?;
-        *self.child.lock().unwrap() = Some(child);
-        crate::log::line(if session.is_some() { "chat: opencode turn (continuing)" } else { "chat: opencode turn" });
-
-        let stderr = Arc::new(Mutex::new(String::new()));
-        let sink = stderr.clone();
-        tauri::async_runtime::spawn(async move {
-            let mut buf = Vec::new();
-            let _ = stderr_pipe.read_to_end(&mut buf).await;
-            let text = String::from_utf8_lossy(&buf);
-            let tail: String = text.chars().rev().take(2000).collect::<Vec<_>>().into_iter().rev().collect();
-            *sink.lock().unwrap() = tail;
-        });
-
-        stdin.write_all(message.as_bytes()).await.map_err(|e| format!("opencode: {e}"))?;
-        drop(stdin);
-
-        let mut lines = BufReader::new(stdout).lines();
-        let mut answer = String::new();
-        let mut failure: Option<String> = None;
-        let mut seen_session = session.clone();
-        loop {
-            let next = tokio::time::timeout(SILENCE_LIMIT, lines.next_line()).await;
-            let line = match next {
-                Err(_) => {
-                    self.stop();
-                    failure = Some("opencode stopped answering.".into());
-                    break;
+        let server = self.server().await?;
+        let result = self.turn(&server, model, &query, context.as_ref(), &on_update).await;
+        if let Err(err) = &result {
+            crate::log::line(format!("chat: opencode failed: {}", err.chars().take(160).collect::<String>()));
+            if !self.alive() {
+                let tail = server.stderr.lock().unwrap().clone();
+                if !tail.trim().is_empty() {
+                    return Err(friendly_error(&tail));
                 }
-                Ok(Ok(Some(line))) => line,
-                Ok(_) => break,
-            };
-            let (event, id) = parse_event(&line);
-            if seen_session.is_none() {
-                seen_session = id;
-            }
-            match event {
-                Event::Text(text) => {
-                    let piece = if answer.is_empty() { text.clone() } else { format!("\n\n{text}") };
-                    answer.push_str(&piece);
-                    on_update(StreamUpdate::Text { text: piece });
-                }
-                Event::Tool(name) => on_update(StreamUpdate::Tool { name }),
-                Event::Error(message) => failure = Some(message),
-                Event::Ignored => {}
             }
         }
+        result.map_err(|e| friendly_error(&e))
+    }
 
-        let child = self.child.lock().unwrap().take();
-        let exited_ok = match child {
-            Some(mut c) => c.wait().await.map(|s| s.success()).unwrap_or(false),
-            // Taken by stop(): the user stopped it.
-            None => false,
+    async fn turn(
+        &self,
+        server: &Server,
+        model: &str,
+        query: &str,
+        context: Option<&ChatContext>,
+        on_update: &impl Fn(StreamUpdate),
+    ) -> Result<(ChatReply, String), String> {
+        let client = reqwest::Client::builder().no_proxy().build().map_err(|e| e.to_string())?;
+        let request = |method: reqwest::Method, path: &str| {
+            client
+                .request(method, format!("{}{path}", server.url))
+                .basic_auth("opencode", Some(&server.password))
+                .timeout(Duration::from_secs(30))
         };
-        if let Some(id) = &seen_session {
-            *self.session.lock().unwrap() = Some(id.clone());
-        }
-        let session_id = seen_session.unwrap_or_default();
 
-        if failure.is_none() && !answer.is_empty() {
-            return Ok((ChatReply { text: answer }, session_id));
+        let existing = self.session.lock().unwrap().clone();
+        let (text, file) = if existing.is_none() { first_message(query, context) } else { (query.to_string(), None) };
+        let session = match existing {
+            Some(id) => id,
+            None => {
+                let title: String = query.lines().next().unwrap_or("").chars().take(80).collect();
+                let created: Value = request(reqwest::Method::POST, "/session")
+                    .json(&json!({ "title": title }))
+                    .send()
+                    .await
+                    .map_err(|e| format!("opencode: {e}"))?
+                    .error_for_status()
+                    .map_err(|e| format!("opencode: {e}"))?
+                    .json()
+                    .await
+                    .map_err(|e| format!("opencode: {e}"))?;
+                let id = created["id"].as_str().filter(|id| is_session_id(id)).ok_or("opencode made no session.")?;
+                *self.session.lock().unwrap() = Some(id.to_string());
+                id.to_string()
+            }
+        };
+
+        // Listen first, so nothing of the answer is missed.
+        let mut events = client
+            .get(format!("{}/event", server.url))
+            .basic_auth("opencode", Some(&server.password))
+            .send()
+            .await
+            .map_err(|e| format!("opencode: {e}"))?
+            .error_for_status()
+            .map_err(|e| format!("opencode: {e}"))?;
+        let mut buf: Vec<u8> = Vec::new();
+        let mut state = TurnState::new(&session);
+        let connected = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                match events.chunk().await {
+                    Ok(Some(chunk)) => {
+                        buf.extend_from_slice(&chunk);
+                        let got = take_events(&mut buf);
+                        if got.iter().any(|e| e["type"] == "server.connected") {
+                            return true;
+                        }
+                    }
+                    _ => return false,
+                }
+            }
+        })
+        .await
+        .unwrap_or(false);
+        if !connected {
+            return Err("opencode is not answering.".into());
         }
-        // Give stderr a moment to be read to its end.
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        let raw = failure.unwrap_or_else(|| {
-            let tail = stderr.lock().unwrap().clone();
-            if exited_ok && tail.trim().is_empty() { "No response text.".into() } else { tail }
-        });
-        crate::log::line(format!("chat: opencode failed: {}", raw.chars().take(160).collect::<String>()));
-        Err(friendly_error(&raw))
+
+        request(reqwest::Method::POST, &format!("/session/{session}/prompt_async"))
+            .json(&prompt_body(model, &text, file.as_deref()))
+            .send()
+            .await
+            .map_err(|e| format!("opencode: {e}"))?
+            .error_for_status()
+            .map_err(|e| format!("opencode: {e}"))?;
+
+        while !state.done {
+            let chunk = tokio::time::timeout(SILENCE_LIMIT, events.chunk())
+                .await
+                .map_err(|_| "opencode stopped answering.".to_string())?
+                .map_err(|_| "opencode stopped.".to_string())?
+                .ok_or("opencode stopped.")?;
+            buf.extend_from_slice(&chunk);
+            for event in take_events(&mut buf) {
+                for update in state.feed(&event) {
+                    on_update(update);
+                }
+            }
+        }
+
+        if let Some(err) = state.error {
+            return Err(err);
+        }
+        let answer = state.answer();
+        if answer.is_empty() {
+            return Err("No response text.".into());
+        }
+        Ok((ChatReply { text: answer }, session))
     }
 }
 
@@ -460,10 +733,17 @@ mod tests {
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
         rt.block_on(async {
             let chat = OpenCodeChat::default();
+            let pieces = Mutex::new(0usize);
             let (reply, id) = chat
-                .send(&model, "Remember the number 42. Answer with one word: ok.".into(), None, |_| {})
+                .send(&model, "Remember the number 42. Answer with one word: ok.".into(), None, |u| {
+                    if matches!(u, StreamUpdate::Text { .. }) {
+                        *pieces.lock().unwrap() += 1;
+                    }
+                })
                 .await
                 .expect("first turn");
+            assert!(*pieces.lock().unwrap() > 0, "the answer must stream");
+            assert!(chat.status().running);
             assert!(!reply.text.is_empty());
             assert!(is_session_id(&id), "{id}");
 
@@ -471,6 +751,8 @@ mod tests {
             assert_eq!(again, id);
             assert!(reply.text.contains("42"), "{}", reply.text);
 
+            chat.stop();
+            assert!(!chat.status().running);
             let listed = list_sessions(12).await;
             assert!(listed.iter().any(|s| s.id == id), "{id} not in {listed:?}");
             let fresh = OpenCodeChat::default();
@@ -488,33 +770,94 @@ mod tests {
         assert!(!is_session_id("f2032dcc-af80-4924-ba0b-3231991b3a4d"));
     }
 
-    #[test]
-    fn events_become_text_tools_and_errors() {
-        let text = r#"{"type":"text","sessionID":"ses_ef92c1b5bffeIrOHp90IEeCzYH","part":{"type":"text","text":"Привет\n"}}"#;
-        assert_eq!(parse_event(text), (Event::Text("Привет".into()), Some("ses_ef92c1b5bffeIrOHp90IEeCzYH".into())));
 
-        let tool = r#"{"type":"tool_use","sessionID":"ses_ef92c1b5bffeIrOHp90IEeCzYH","part":{"type":"tool","tool":"websearch","state":{"status":"completed"}}}"#;
-        assert_eq!(parse_event(tool).0, Event::Tool("websearch".into()));
 
-        let error = r#"{"type":"error","sessionID":"ses_ef92c9d4fffeqAm58L1ETClkdT","error":{"name":"APIError","data":{"message":"OpenCode's free tier can only be used from within OpenCode","statusCode":403}}}"#;
-        assert_eq!(parse_event(error).0, Event::Error("OpenCode's free tier can only be used from within OpenCode".into()));
-
-        for line in [r#"{"type":"step_start","part":{}}"#, r#"{"type":"step_finish"}"#, "not json", ""] {
-            assert_eq!(parse_event(line).0, Event::Ignored, "{line}");
-        }
+    /// Events recorded from a real `opencode serve` turn, trimmed.
+    fn recorded_turn(session: &str) -> Vec<Value> {
+        let s = session;
+        [
+            json!({"type":"server.connected","properties":{}}),
+            json!({"type":"message.updated","properties":{"info":{"id":"msg_user","role":"user","sessionID":s}}}),
+            json!({"type":"message.part.updated","properties":{"part":{"id":"prt_u","type":"text","messageID":"msg_user","sessionID":s,"text":"Назови цвета"}}}),
+            json!({"type":"session.status","properties":{"sessionID":s,"status":{"type":"busy"}}}),
+            json!({"type":"message.updated","properties":{"info":{"id":"msg_a","role":"assistant","sessionID":s}}}),
+            json!({"type":"message.part.updated","properties":{"part":{"id":"prt_r","type":"reasoning","messageID":"msg_a","sessionID":s,"text":""}}}),
+            json!({"type":"message.part.delta","properties":{"sessionID":s,"messageID":"msg_a","partID":"prt_r","field":"text","delta":"We need"}}),
+            json!({"type":"message.part.updated","properties":{"part":{"id":"prt_t1","type":"text","messageID":"msg_a","sessionID":s,"text":""}}}),
+            json!({"type":"message.part.delta","properties":{"sessionID":s,"messageID":"msg_a","partID":"prt_t1","field":"text","delta":"Крас"}}),
+            json!({"type":"message.part.delta","properties":{"sessionID":"ses_otherotherotherotherother1","partID":"prt_t1","field":"text","delta":"чужое"}}),
+            json!({"type":"message.part.delta","properties":{"sessionID":s,"messageID":"msg_a","partID":"prt_t1","field":"text","delta":"ный."}}),
+            json!({"type":"message.part.updated","properties":{"part":{"id":"prt_tool","type":"tool","tool":"websearch","messageID":"msg_a","sessionID":s,"state":{"status":"running"}}}}),
+            json!({"type":"message.part.updated","properties":{"part":{"id":"prt_tool","type":"tool","tool":"websearch","messageID":"msg_a","sessionID":s,"state":{"status":"completed"}}}}),
+            json!({"type":"message.part.updated","properties":{"part":{"id":"prt_t2","type":"text","messageID":"msg_a","sessionID":s,"text":""}}}),
+            json!({"type":"message.part.delta","properties":{"sessionID":s,"messageID":"msg_a","partID":"prt_t2","field":"text","delta":"Синий."}}),
+            json!({"type":"message.part.updated","properties":{"part":{"id":"prt_t1","type":"text","messageID":"msg_a","sessionID":s,"text":"Красный."}}}),
+            json!({"type":"session.status","properties":{"sessionID":s,"status":{"type":"idle"}}}),
+            json!({"type":"session.idle","properties":{"sessionID":s}}),
+        ]
+        .into()
     }
 
     #[test]
-    fn the_command_line_keeps_values_out_of_flags() {
-        let first = args("anymodel/am/kimi-k3", None, "-rf what", Some("/home/u/.local/share/coucou/inbox/a.txt"));
+    fn a_turn_streams_the_answer_and_nothing_else() {
+        let s = "ses_ef9067a48ffe99L20IIr3j3IPl";
+        let mut state = TurnState::new(s);
+        let mut updates = Vec::new();
+        let events = recorded_turn(s);
+        for (i, event) in events.iter().enumerate() {
+            updates.extend(state.feed(event));
+            // Done on the idle status, not a moment before.
+            assert_eq!(state.done, i >= events.len() - 2, "event {i}");
+        }
+        assert!(state.done);
+        assert_eq!(state.error, None);
         assert_eq!(
-            first,
-            ["run", "--pure", "--format", "json", "--agent", "coucou", "--model=anymodel/am/kimi-k3", "--title=-rf what",
-             "--file=/home/u/.local/share/coucou/inbox/a.txt"]
+            updates,
+            [
+                StreamUpdate::Text { text: "Крас".into() },
+                StreamUpdate::Text { text: "ный.".into() },
+                StreamUpdate::Tool { name: "websearch".into() },
+                StreamUpdate::Text { text: "\n\nСиний.".into() },
+            ]
         );
-        let again = args("", Some("ses_ef92c1b5bffeIrOHp90IEeCzYH"), "ignored", None);
-        assert_eq!(again.last().unwrap(), "--session=ses_ef92c1b5bffeIrOHp90IEeCzYH");
-        assert!(!again.iter().any(|a| a.starts_with("--model") || a.starts_with("--title")));
+        assert_eq!(state.answer(), "Красный.\n\nСиний.");
+    }
+
+    #[test]
+    fn a_failed_turn_says_why() {
+        let s = "ses_ef9067a48ffe99L20IIr3j3IPl";
+        let mut state = TurnState::new(s);
+        state.feed(&json!({"type":"session.status","properties":{"sessionID":s,"status":{"type":"busy"}}}));
+        state.feed(&json!({"type":"session.error","properties":{"sessionID":s,"error":{"name":"APIError","data":{"message":"Insufficient balance"}}}}));
+        state.feed(&json!({"type":"session.idle","properties":{"sessionID":s}}));
+        assert!(state.done);
+        assert_eq!(state.error.as_deref(), Some("Insufficient balance"));
+
+        let mut idle_first = TurnState::new(s);
+        idle_first.feed(&json!({"type":"session.idle","properties":{"sessionID":s}}));
+        assert!(!idle_first.done, "an idle before the turn started is not its end");
+    }
+
+    #[test]
+    fn the_event_stream_is_cut_into_whole_events() {
+        let mut buf = b"data: {\"type\":\"a\"}\n\ndata: {\"type\":\"b\",\"x\":\"\xd0\xbf".to_vec();
+        let got = take_events(&mut buf);
+        assert_eq!(got, [json!({"type":"a"})]);
+        buf.extend_from_slice(b"\xd1\x80\"}\n\n");
+        assert_eq!(take_events(&mut buf), [json!({"type":"b","x":"пр"})]);
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn models_and_prompts_take_opencodes_shape() {
+        assert_eq!(model_ref("anymodel/am/kimi-k3"), Some(json!({"providerID":"anymodel","modelID":"am/kimi-k3"})));
+        assert_eq!(model_ref(""), None);
+        assert_eq!(model_ref("nomodel"), None);
+        let body = prompt_body("", "Кратко?", Some("/x/inbox/a b.pdf"));
+        assert_eq!(body["agent"], AGENT);
+        assert!(body.get("model").is_none());
+        assert_eq!(body["parts"][0], json!({"type":"file","mime":"application/pdf","filename":"a b.pdf","url":"file:///x/inbox/a b.pdf"}));
+        assert_eq!(body["parts"][1], json!({"type":"text","text":"Кратко?"}));
     }
 
     #[test]

@@ -86,12 +86,14 @@ continue it; **Settings → Chat → Continue last chat** brings back the last.
 **opencode** is the second backend: pick it in **Settings… → Chat → Answers
 from**, then a model among those `opencode models` lists — any provider you set
 up in opencode (`opencode auth login`): OpenCode Zen, OpenRouter, an
-OpenAI-compatible endpoint… Each message runs `opencode run` in the background
-as Coucou's own agent, defined for that run only, with web search and nothing
+OpenAI-compatible endpoint… Your first message starts a hidden `opencode serve`
+(127.0.0.1 only, behind a random password) that stays up like the Claude Code
+process, stops on the same idle timer, and answers word by word. It runs as
+Coucou's own agent, defined for that server only, with web search and nothing
 else — no files, no edits, no commands, no MCP tools, no plugins. Your opencode
 config is read, never changed. opencode keeps the conversations; the clock in
-the chat lists them as with Claude Code. Answers arrive a paragraph at a time
-rather than word by word, and a PDF is read only by models that take PDFs.
+the chat lists them as with Claude Code. A PDF is read only by models that
+take PDFs.
 
 **opencode sessions on the island**: **Settings… → opencode → Install plugin**
 writes one file, `~/.config/opencode/plugin/coucou.js`, and nothing else of

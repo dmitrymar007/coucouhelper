@@ -91,7 +91,9 @@ impl Chat {
                 Ok(Sent { reply, session: Some(session) })
             }
             Backend::OpenCode => {
-                let (reply, session) = self.opencode.send(&settings.opencode_model, query, context, on_update).await?;
+                let result = self.opencode.send(&settings.opencode_model, query, context, on_update).await;
+                self.opencode.stop_when_idle(settings.idle);
+                let (reply, session) = result?;
                 Ok(Sent { reply, session: (!session.is_empty()).then_some(session) })
             }
         }
