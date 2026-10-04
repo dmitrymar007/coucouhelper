@@ -160,7 +160,8 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
   }
 
   function historyRow(session: ChatSession): HTMLElement {
-    const meta = `${when(session.modified)} · ${session.messages} messages${session.current ? " · open" : ""}`;
+    const count = session.messages == null ? "" : ` · ${session.messages} messages`;
+    const meta = `${when(session.modified)}${count}${session.current ? " · open" : ""}`;
     const row = h(
       "button",
       { class: session.current ? "history-row current" : "history-row" },
@@ -243,7 +244,7 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
       input.placeholder = State.chatHistory.length === 0 ? "Ask me anything…" : "Continue…";
       input.disabled = sending;
       newBtn.toggleAttribute("disabled", sending);
-      // Only Claude Code keeps conversations to come back to.
+      // Only Claude Code and opencode keep conversations to come back to.
       historyBtn.style.display = State.settings.chatBackend === "api-key" ? "none" : "";
       if (historyOpen && (sending || State.settings.chatBackend === "api-key")) void showHistory(false);
     },

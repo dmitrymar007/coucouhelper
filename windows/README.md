@@ -83,7 +83,17 @@ keeps the conversations in `~/.claude/projects/`. In the chat, the pencil
 starts a new conversation and the clock lists the earlier ones — pick one to
 continue it; **Settings → Chat → Continue last chat** brings back the last.
 
-The other backend, **Anthropic API key**, works as before:
+**opencode** is the second backend: pick it in **Settings… → Chat → Answers
+from**, then a model among those `opencode models` lists — any provider you set
+up in opencode (`opencode auth login`): OpenCode Zen, OpenRouter, an
+OpenAI-compatible endpoint… Each message runs `opencode run` in the background
+as Coucou's own agent, defined for that run only, with web search and nothing
+else — no files, no edits, no commands, no MCP tools, no plugins. Your opencode
+config is read, never changed. opencode keeps the conversations; the clock in
+the chat lists them as with Claude Code. Answers arrive a paragraph at a time
+rather than word by word, and a PDF is read only by models that take PDFs.
+
+The third backend, **Anthropic API key**, works as before:
 **Settings… → Claude** takes your Anthropic API key. Keys live in the **Windows
 Credential Manager**, never on disk and never in the interface — the island can
 only ask whether a key exists. Same for every integration key.

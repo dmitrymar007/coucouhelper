@@ -3,6 +3,7 @@
 mod chat;
 mod claude;
 mod claude_cli;
+mod opencode_cli;
 mod files;
 mod hooks;
 mod integrations;
@@ -329,8 +330,12 @@ fn chat_stop(chat: State<Chat>) {
 }
 
 #[tauri::command]
-fn chat_status(chat: State<Chat>) -> claude_cli::CliStatus {
-    chat.status()
+fn chat_status(shared: State<Shared>, chat: State<Chat>) -> claude_cli::CliStatus {
+    chat.status(current_backend(&shared))
+}
+
+fn current_backend(shared: &Shared) -> chat::Backend {
+    chat::Backend::from_setting(&shared.settings.lock().unwrap().chat_backend)
 }
 
 /// Is `claude` installed and signed in? Asked by the settings window.
@@ -339,10 +344,22 @@ async fn chat_install() -> claude_cli::Install {
     chat::install_status().await
 }
 
+/// Is `opencode` installed, and which version? Asked by the settings window.
+#[tauri::command]
+async fn chat_opencode_install() -> opencode_cli::Install {
+    opencode_cli::install_status().await
+}
+
+/// The models opencode can use, for the settings window's list.
+#[tauri::command]
+async fn chat_opencode_models() -> Vec<String> {
+    opencode_cli::models().await
+}
+
 /// Settings → Continue last chat: the island gets the conversation back and
 /// the next message resumes it.
 #[tauri::command]
-fn chat_resume_last(app: AppHandle, shared: State<Shared>, chat: State<Chat>) -> Result<usize, String> {
+async fn chat_resume_last(app: AppHandle, shared: State<'_, Shared>, chat: State<'_, Chat>) -> Result<usize, String> {
     let session = shared
         .settings
         .lock()
@@ -350,17 +367,25 @@ fn chat_resume_last(app: AppHandle, shared: State<Shared>, chat: State<Chat>) ->
         .last_chat_session
         .clone()
         .ok_or("No saved conversation yet.")?;
-    resume_chat(&app, &chat, &session)
+    // The next message goes to the current backend, so the conversation must be its own.
+    let opencode_session = opencode_cli::is_session_id(&session);
+    match current_backend(&shared) {
+        chat::Backend::OpenCode if !opencode_session => return Err("The last chat was with Claude Code: switch the chat back to it to continue.".into()),
+        chat::Backend::ClaudeCode if opencode_session => return Err("The last chat was with opencode: switch the chat back to it to continue.".into()),
+        chat::Backend::ApiKey => return Err("Conversations are kept by Claude Code and opencode, not with an API key.".into()),
+        _ => {}
+    }
+    resume_chat(&app, &chat, &session).await
 }
 
 /// The chat's history button: one of the conversations from `chat_sessions`.
 #[tauri::command]
-fn chat_resume(app: AppHandle, chat: State<Chat>, session: String) -> Result<usize, String> {
-    resume_chat(&app, &chat, &session)
+async fn chat_resume(app: AppHandle, chat: State<'_, Chat>, session: String) -> Result<usize, String> {
+    resume_chat(&app, &chat, &session).await
 }
 
-fn resume_chat(app: &AppHandle, chat: &Chat, session: &str) -> Result<usize, String> {
-    let messages = chat.resume(session)?;
+async fn resume_chat(app: &AppHandle, chat: &Chat, session: &str) -> Result<usize, String> {
+    let messages = chat.resume(session).await?;
     let count = messages.len();
     let _ = app.emit_to(island::WINDOW_LABEL, "chat-restored", messages);
     Ok(count)
@@ -368,12 +393,15 @@ fn resume_chat(app: &AppHandle, chat: &Chat, session: &str) -> Result<usize, Str
 
 /// Recent conversations for the chat's history list, the live one marked.
 #[tauri::command]
-fn chat_sessions(chat: State<Chat>) -> Vec<ChatSessionRow> {
-    let current = chat.status().session_id;
-    chat.sessions(12)
+async fn chat_sessions(shared: State<'_, Shared>, chat: State<'_, Chat>) -> Result<Vec<ChatSessionRow>, String> {
+    let backend = current_backend(&shared);
+    let current = chat.status(backend).session_id;
+    Ok(chat
+        .sessions(backend, 12)
+        .await
         .into_iter()
         .map(|info| ChatSessionRow { current: current.as_deref() == Some(info.id.as_str()), info })
-        .collect()
+        .collect())
 }
 
 #[derive(Serialize)]
@@ -571,6 +599,8 @@ pub fn run() {
             chat_stop,
             chat_status,
             chat_install,
+            chat_opencode_install,
+            chat_opencode_models,
             chat_resume_last,
             chat_resume,
             chat_sessions,

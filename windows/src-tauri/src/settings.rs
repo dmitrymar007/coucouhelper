@@ -21,16 +21,21 @@ pub struct Settings {
     #[serde(default = "default_model")]
     pub model: String,
     /// Who answers the chat: "claude-code" (the user's subscription, through
-    /// the `claude` CLI) or "api-key".
+    /// the `claude` CLI), "opencode" (the `opencode` CLI and its providers) or
+    /// "api-key".
     #[serde(default = "default_chat_backend")]
     pub chat_backend: String,
     /// Model alias handed to Claude Code: "sonnet", "opus", "haiku"…
     #[serde(default = "default_cli_model")]
     pub cli_model: String,
+    /// "provider/model" handed to opencode; empty: opencode's own default.
+    #[serde(default)]
+    pub opencode_model: String,
     /// Minutes without a message before the Claude Code process stops; 0 never.
     #[serde(default = "default_chat_idle_minutes")]
     pub chat_idle_minutes: u32,
-    /// Last Claude Code chat session, so it can be picked up after a restart.
+    /// Last Claude Code or opencode chat session, so it can be picked up after
+    /// a restart.
     #[serde(default)]
     pub last_chat_session: Option<String>,
     /// The island has told the user once about the GNOME extension.
@@ -73,6 +78,7 @@ impl Default for Settings {
             model: default_model(),
             chat_backend: default_chat_backend(),
             cli_model: default_cli_model(),
+            opencode_model: String::new(),
             chat_idle_minutes: default_chat_idle_minutes(),
             last_chat_session: None,
             shell_hint_shown: false,

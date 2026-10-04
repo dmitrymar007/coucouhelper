@@ -2,6 +2,8 @@
 
 ## Unreleased (coucouhelper, Linux)
 
+- The chat can answer through opencode: Settings → Chat → Answers from → opencode, then any model from the providers set up in opencode (OpenCode Zen, OpenRouter, OpenAI-compatible endpoints…). Web search only, as with Claude Code; the clock lists earlier opencode chats to continue.
+- GNOME: started at login before GNOME has loaded its extensions, Coucou waits for the Coucou extension instead of falling back below the top bar; minimizing a window or switching workspaces no longer brings the old window back.
 - Send a dropped file by email again: through Resend (API key and the new Sender field), or into your mail app with the file attached.
 - With the GNOME extension: "Open terminal" brings back the terminal or editor window the session runs in, the chat takes the window you were in as its context, and dragging Mochi onto a window attaches it to a new chat.
 - GNOME: a GNOME Shell extension puts the island over the top bar, like the Mac notch, keeps it out of Alt+Tab, the overview and the dock, moves the clock to the left while the island is there, lets Mochi's eyes follow the pointer everywhere and folds the island on a click elsewhere. Install or remove it in Settings → GNOME; GNOME starts it at the next login. Without it, the Xwayland window below the top bar stays as the fallback.

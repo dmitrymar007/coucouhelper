@@ -94,10 +94,12 @@ export interface Settings {
   hooksInstalled: boolean;
   /** Claude model used by the chat with an API key. */
   model: string;
-  /** "claude-code" (subscription, through the claude CLI) or "api-key". */
+  /** "claude-code" (subscription, through the claude CLI), "opencode" or "api-key". */
   chatBackend: string;
   /** Model alias for Claude Code: "sonnet", "opus", "haiku". */
   cliModel: string;
+  /** "provider/model" for opencode; empty: opencode's own default. */
+  opencodeModel: string;
   /** Minutes before an idle Claude Code process stops; 0 = never. */
   chatIdleMinutes: number;
   /** Owned by Rust: the conversation "Continue last chat" picks up. */
@@ -118,6 +120,7 @@ export const DEFAULT_SETTINGS: Settings = {
   model: "claude-opus-5",
   chatBackend: "claude-code",
   cliModel: "sonnet",
+  opencodeModel: "",
   chatIdleMinutes: 30,
   lastChatSession: null,
 };

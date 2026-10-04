@@ -109,12 +109,16 @@ export const Bridge = {
   chatSend: (query: string, context: ChatContext | null) =>
     callOrThrow<{ text: string }>("chat_send", { query, context }),
   chatReset: () => call<void>("chat_reset"),
-  /** Ends the Claude Code process; the next message starts it again. */
+  /** Ends the Claude Code process and any opencode answer being written. */
   chatStop: () => call<void>("chat_stop"),
   chatStatus: () => call<ChatStatus>("chat_status"),
   /** Whether `claude` is installed and signed in. */
   chatInstall: () => call<ClaudeInstall>("chat_install"),
-  /** Hands the last Claude Code conversation back to the island. */
+  /** Whether `opencode` is installed, and its version. */
+  chatOpencodeInstall: () => call<OpencodeInstall>("chat_opencode_install"),
+  /** Every "provider/model" opencode can use. */
+  chatOpencodeModels: () => call<string[]>("chat_opencode_models"),
+  /** Hands the last Claude Code or opencode conversation back to the island. */
   chatResumeLast: () => callOrThrow<number>("chat_resume_last"),
   // ── GNOME Shell extension ────────────────────────────────────────────────
   shellExtensionStatus: () => call<ShellExtensionStatus>("shell_extension_status"),
@@ -123,7 +127,7 @@ export const Bridge = {
   /** Only from an explicit click in Settings. */
   shellExtensionRemove: () => callOrThrow<ShellExtensionStatus>("shell_extension_remove"),
   shellHintSeen: () => call<void>("shell_hint_seen"),
-  /** Recent Claude Code conversations started from the island, newest first. */
+  /** Recent conversations started from the island on the current backend, newest first. */
   chatSessions: () => call<ChatSession[]>("chat_sessions"),
   /** Picks one of them up again; its messages arrive as `chat-restored`. */
   chatResume: (session: string) => callOrThrow<number>("chat_resume", { session }),
@@ -153,7 +157,7 @@ export interface IntegrationUpdate {
   event: { success: boolean; label: string; detail: string | null } | null;
 }
 
-/** A piece of the answer while it is still coming (Claude Code chat). */
+/** A piece of the answer while it is still coming (Claude Code and opencode chats). */
 export type ChatStreamUpdate = { kind: "text"; text: string } | { kind: "tool"; name: string };
 
 export interface ChatSession {
@@ -161,7 +165,8 @@ export interface ChatSession {
   title: string;
   /** Seconds since 1970. */
   modified: number;
-  messages: number;
+  /** Unknown for opencode conversations. */
+  messages: number | null;
   current: boolean;
 }
 
@@ -174,6 +179,11 @@ export interface ClaudeInstall {
   path: string | null;
   loggedIn: boolean;
   authMethod: string | null;
+}
+
+export interface OpencodeInstall {
+  path: string | null;
+  version: string | null;
 }
 
 export type ChatContext =

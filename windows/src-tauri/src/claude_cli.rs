@@ -162,7 +162,8 @@ pub struct SessionInfo {
     pub title: String,
     /// Last change, in seconds since 1970.
     pub modified: u64,
-    pub messages: usize,
+    /// How many messages, when the backend says (opencode's list does not).
+    pub messages: Option<usize>,
 }
 
 /// The chat's own saved conversations, newest first. Only those started from
@@ -189,7 +190,7 @@ pub fn list_sessions(limit: usize) -> Vec<SessionInfo> {
                 id,
                 title: first.content.lines().next().unwrap_or("").chars().take(80).collect(),
                 modified: modified.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0),
-                messages: messages.len(),
+                messages: Some(messages.len()),
             })
         })
         .take(limit)
@@ -541,7 +542,7 @@ async fn turn(io: &mut Io, message: &Value, on_update: &impl Fn(StreamUpdate)) -
 
 /// Linux: the chat process gets SIGTERM when Coucou goes, however it goes.
 #[cfg(target_os = "linux")]
-fn die_with_parent(cmd: &mut Command) {
+pub(crate) fn die_with_parent(cmd: &mut Command) {
     unsafe {
         cmd.pre_exec(|| {
             libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
@@ -551,7 +552,7 @@ fn die_with_parent(cmd: &mut Command) {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn die_with_parent(_cmd: &mut Command) {}
+pub(crate) fn die_with_parent(_cmd: &mut Command) {}
 
 /// A random version-4 UUID. The randomness comes from the OS keys std's
 /// `RandomState` is seeded with — not worth a dependency.

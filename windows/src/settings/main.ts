@@ -186,17 +186,19 @@ const IDLE_CHOICES: [number, string][] = [
   [0, "only when Coucou quits"],
 ];
 
-/** Who answers the island's chat: Claude Code on the user's subscription, or an API key. */
+/** Who answers the island's chat: Claude Code on the user's subscription, opencode, or an API key. */
 function chatSection(): HTMLElement {
   const dot = statusDot(false);
-  const install = h("span", { class: "hint", text: "Looking for Claude Code…" });
+  const install = h("span", { class: "hint", text: "" });
 
   const backend = h("select", {}) as HTMLSelectElement;
   backend.append(
     h("option", { value: "claude-code", text: "Claude Code (your subscription)" }),
+    h("option", { value: "opencode", text: "opencode (your providers)" }),
     h("option", { value: "api-key", text: "Anthropic API key" }),
   );
   backend.value = settings.chatBackend;
+  if (backend.value === "") backend.value = "claude-code";
 
   const model = h("select", {}) as HTMLSelectElement;
   for (const [id, label] of CLI_MODELS) model.append(h("option", { value: id, text: label }));
@@ -208,6 +210,27 @@ function chatSection(): HTMLElement {
     settings.cliModel = model.value;
     void save();
   });
+
+  // opencode's models come from `opencode models`, once, when first shown.
+  const ocModel = h("select", {}) as HTMLSelectElement;
+  ocModel.append(h("option", { value: "", text: "opencode's default" }));
+  if (settings.opencodeModel) {
+    ocModel.append(h("option", { value: settings.opencodeModel, text: settings.opencodeModel }));
+  }
+  ocModel.value = settings.opencodeModel;
+  ocModel.addEventListener("change", () => {
+    settings.opencodeModel = ocModel.value;
+    void save();
+  });
+  let ocModelsLoaded = false;
+  async function loadOpencodeModels() {
+    if (ocModelsLoaded) return;
+    ocModelsLoaded = true;
+    const models = (await Bridge.chatOpencodeModels()) ?? [];
+    for (const id of models) {
+      if (id !== settings.opencodeModel) ocModel.append(h("option", { value: id, text: id }));
+    }
+  }
 
   const idle = h("select", {}) as HTMLSelectElement;
   for (const [min, label] of IDLE_CHOICES) idle.append(h("option", { value: String(min), text: label }));
@@ -223,11 +246,9 @@ function chatSection(): HTMLElement {
   const resumeBtn = h("button", { text: "Continue last chat" });
   const feedback = h("div", {});
 
-  const cliRows = [
+  const claudeRows = [
     h("div", { class: "row" }, h("label", { text: "Model" }), model),
     h("div", { class: "row" }, h("label", { text: "Stop Claude Code" }), idle),
-    h("div", { class: "row" }, h("label", { text: "Chat process" }), running, stopBtn),
-    h("div", { class: "row" }, h("label", { text: "History" }), resumeBtn),
     h("div", {
       class: "hint",
       text:
@@ -235,6 +256,20 @@ function chatSection(): HTMLElement {
         "no access to your files, no edits, no commands, no MCP servers, no hooks. It starts with your first message and keeps " +
         "running so the next answers come quickly. Conversations are saved by Claude Code in ~/.claude/projects.",
     }),
+  ];
+  const opencodeRows = [
+    h("div", { class: "row" }, h("label", { text: "Model" }), ocModel),
+    h("div", {
+      class: "hint",
+      text:
+        "Each message runs opencode with the providers you set up in it (opencode auth login), as its own agent with web search only: " +
+        "no access to your files, no edits, no commands, no MCP tools, no plugins. Your opencode config is read, never changed. " +
+        "Conversations are saved by opencode, like its own sessions.",
+    }),
+  ];
+  const sharedRows = [
+    h("div", { class: "row" }, h("label", { text: "Chat process" }), running, stopBtn),
+    h("div", { class: "row" }, h("label", { text: "History" }), resumeBtn),
   ];
 
   async function refreshStatus() {
@@ -244,8 +279,10 @@ function chatSection(): HTMLElement {
     resumeBtn.toggleAttribute("disabled", !settings.lastChatSession);
   }
 
-  async function refreshInstall() {
+  async function refreshClaude() {
+    install.textContent = "Looking for Claude Code…";
     const info = await Bridge.chatInstall();
+    if (backend.value !== "claude-code") return;
     const ok = !!info?.path && info.loggedIn;
     dot.style.background = ok ? "#22c55e" : "#f4505e";
     if (!info?.path) {
@@ -258,12 +295,26 @@ function chatSection(): HTMLElement {
     }
   }
 
+  async function refreshOpencode() {
+    install.textContent = "Looking for opencode…";
+    const info = await Bridge.chatOpencodeInstall();
+    if (backend.value !== "opencode") return;
+    dot.style.background = info?.path ? "#22c55e" : "#f4505e";
+    install.textContent = info?.path
+      ? `opencode ${info.version ?? ""} — ${info.path}`
+      : "opencode is not installed: `opencode` was not found on your PATH or in ~/.opencode/bin.";
+    if (info?.path) void loadOpencodeModels();
+  }
+
   function draw() {
-    const cli = backend.value === "claude-code";
-    install.style.display = cli ? "" : "none";
-    for (const row of cliRows) row.style.display = cli ? "" : "none";
-    if (!cli) dot.style.background = "#22c55e";
-    else void refreshInstall();
+    const which = backend.value;
+    install.style.display = which === "api-key" ? "none" : "";
+    for (const row of claudeRows) row.style.display = which === "claude-code" ? "" : "none";
+    for (const row of opencodeRows) row.style.display = which === "opencode" ? "" : "none";
+    for (const row of sharedRows) row.style.display = which === "api-key" ? "none" : "";
+    if (which === "api-key") dot.style.background = "#22c55e";
+    else if (which === "opencode") void refreshOpencode();
+    else void refreshClaude();
   }
 
   backend.addEventListener("change", () => {
@@ -300,7 +351,9 @@ function chatSection(): HTMLElement {
     h("h2", {}, dot, h("span", { text: "Chat" })),
     install,
     h("div", { class: "row" }, h("label", { text: "Answers from" }), backend),
-    ...cliRows,
+    ...claudeRows,
+    ...opencodeRows,
+    ...sharedRows,
     feedback,
   );
 }
