@@ -179,10 +179,10 @@ function buildOverview(actions: ViewActions): ViewHost {
         mode = null;
       }
 
-      // VS Code with a live Claude Code session keeps the ticker; every other
-      // pill shows its own card, exactly like IntegrationCardView.
-      const sessionActive =
-        task?.id === "integration_claude" && (task.state !== "idle" || task.steps.length > 0);
+      // An agent with a live session (Claude Code, opencode…) shows the ticker;
+      // every other pill shows its own card, exactly like IntegrationCardView.
+      const isAgent = task?.id === "integration_claude" || task?.source === "agent";
+      const sessionActive = !!task && isAgent && (task.state !== "idle" || task.steps.length > 0);
 
       if (task && sessionActive) {
         if (mode !== "ticker") {
@@ -195,7 +195,16 @@ function buildOverview(actions: ViewActions): ViewHost {
         who.append(
           dot(task.color, 7),
           h("span", { class: "name", text: task.name }),
-          h("span", { class: "tool", text: task.source === "claudeCode" ? "Claude Code" : "n8n" }),
+          h("span", {
+            class: "tool",
+            // Claude Code's pill takes the project's name during a session;
+            // other agents keep theirs and show the project beside it.
+            text: task.source === "claudeCode"
+              ? "Claude Code"
+              : task.source === "agent"
+                ? (task.sessionCwd?.split(/[\\/]/).filter(Boolean).pop() ?? "Agent")
+                : "n8n",
+          }),
         );
         if (task.steps.length > 1) {
           who.append(h("span", {

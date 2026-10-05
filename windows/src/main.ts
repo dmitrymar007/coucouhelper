@@ -5,7 +5,7 @@ import { Bridge, IS_TAURI, onEvent } from "./core/bridge";
 import { Sound } from "./core/sound";
 import { State, type Settings } from "./core/state";
 import { Island } from "./island/island";
-import { registerHookHandlers } from "./island/hooks";
+import { registerHookHandlers, showDeclaredAgents } from "./island/hooks";
 import { registerIntegrationHandlers, refreshConfigured } from "./island/integrations";
 
 async function main() {
@@ -22,6 +22,7 @@ async function main() {
   }
   island.applySettings();
   State.loadIntegrationTasks();
+  void showDeclaredAgents();
   if (boot && !boot.cursorPoll) island.followPageCursor();
 
   // GNOME without the Coucou extension: say once, after the greeting, that

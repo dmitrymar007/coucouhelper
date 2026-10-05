@@ -18,6 +18,23 @@ const CLAUDE_ID = "integration_claude";
  */
 const APPROVAL_AGENTS: ReadonlySet<string> = new Set(["agent_opencode"]);
 
+/**
+ * Agents Coucou integrates itself (opencode, through its plugin): their pill
+ * has a fixed name and colour, shows from launch while the integration is
+ * installed, and goes back to idle after a session like Claude Code's —
+ * instead of appearing and vanishing with every answer like an unknown agent.
+ */
+const DECLARED_AGENTS: ReadonlyMap<string, { name: string; color: string }> = new Map([
+  ["agent_opencode", { name: "opencode", color: "#FAB283" }],
+]);
+
+/** Puts the opencode pill up when its plugin is installed. */
+export async function showDeclaredAgents() {
+  const plugin = await Bridge.opencodePluginStatus();
+  const opencode = DECLARED_AGENTS.get("agent_opencode")!;
+  if (plugin?.installed) State.upsertExternalAgent("agent_opencode", opencode.name, opencode.color);
+}
+
 /** Clears the approval card if no decision was made before the hook gave up. */
 let pendingTimeout: number | null = null;
 
@@ -205,6 +222,9 @@ function handleHook(island: Island, payload: HookPayload) {
   const validAgent = validateAgent(payload.coucou_agent);
   const agentId = validAgent ? `agent_${validAgent}` : CLAUDE_ID;
   const isExternalAgent = validAgent !== null;
+  const declared = DECLARED_AGENTS.get(agentId);
+  /** Unknown agents' pills come and go with their sessions; declared ones stay. */
+  const transient = isExternalAgent && !declared;
 
   const focused = State.focusId === agentId;
 
@@ -222,7 +242,7 @@ function handleHook(island: Island, payload: HookPayload) {
   /** Ensure the agent pill exists (no-op for Claude Code). */
   const ensurePill = () => {
     if (isExternalAgent) {
-      State.upsertExternalAgent(agentId, validAgent!, agentColor(validAgent!));
+      State.upsertExternalAgent(agentId, declared?.name ?? validAgent!, declared?.color ?? agentColor(validAgent!));
       // "Open terminal" brings back the agent's window, as for Claude Code.
       const t = State.tasks.find((x) => x.id === agentId);
       if (t && cwd) t.sessionCwd = cwd;
@@ -287,7 +307,7 @@ function handleHook(island: Island, payload: HookPayload) {
       if (focused) surface("finished", true);
       else State.setPillBadge(agentId, "finished");
       window.setTimeout(() => {
-        if (isExternalAgent) {
+        if (transient) {
           State.removeTask(agentId);
         } else {
           State.updateTask(agentId, "idle");
@@ -304,8 +324,11 @@ function handleHook(island: Island, payload: HookPayload) {
       break;
 
     case "SessionEnd":
-      if (isExternalAgent) {
+      if (transient) {
         State.removeTask(agentId);
+      } else if (isExternalAgent) {
+        State.updateTask(agentId, "idle");
+        State.setPillBadge(agentId, null);
       } else {
         State.updateTask(agentId, "idle");
         clearSession();

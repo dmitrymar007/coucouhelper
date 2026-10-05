@@ -55,19 +55,27 @@ const OPEN_URLS: Record<string, string> = {
 
 function idleCard(task: AgentTask, openSettings: () => void): HTMLElement {
   const info = State.integrations[task.id];
-  const configured = info?.configured ?? false;
+  const isClaude = task.id === "integration_claude";
+  // An external agent's pill only exists once its integration (opencode's
+  // plugin) is installed or it has sent events: it is set up by definition.
+  const isAgent = isClaude || task.source === "agent";
+  const configured = task.source === "agent" ? true : (info?.configured ?? false);
   const error = info?.error ?? null;
-  // The Claude Code pill is about hooks, not a key — the macOS wording would be
+  // Agents are about hooks or a plugin, not a key — the macOS wording would be
   // misleading here.
-  const missing = task.id === "integration_claude" ? "Hooks not installed" : "Key not configured";
-  // Claude Code has nothing to load: installed hooks just wait for a session.
-  const ready = task.id === "integration_claude" ? "Hooks installed · waiting for a session" : "Connected · loading…";
+  const missing = isClaude ? "Hooks not installed" : "Key not configured";
+  // Agents have nothing to load: they just wait for a session.
+  const ready = isClaude
+    ? "Hooks installed · waiting for a session"
+    : isAgent
+      ? "Plugin installed · waiting for a session"
+      : "Connected · loading…";
   const label = error ?? (configured ? ready : missing);
   const statusColor = error || !configured ? "#F4505E" : "#22C55E";
 
   const actions = h("div", { class: "int-actions" });
-  if (task.id === "integration_claude") {
-    // Claude Code runs in any terminal: bring back the last session's window,
+  if (isAgent) {
+    // Agents run in any terminal: bring back the last session's window,
     // when there was one.
     if (task.sessionPids?.length || task.sessionCwd) {
       actions.append(
@@ -98,7 +106,7 @@ function idleCard(task: AgentTask, openSettings: () => void): HTMLElement {
       }),
     );
   }
-  if (configured && task.id !== "integration_claude") {
+  if (configured && !isAgent) {
     actions.append(
       h("button", {
         class: "link-btn",
@@ -116,7 +124,7 @@ function idleCard(task: AgentTask, openSettings: () => void): HTMLElement {
   return h(
     "div",
     { class: "int-card" },
-    header(task.color, task.name, task.id === "integration_claude" ? "Agent" : "Integration"),
+    header(task.color, task.name, isAgent ? "Agent" : "Integration"),
     h("div", { class: "int-status" }, dot(statusColor, 5), h("span", { text: label })),
     actions,
   );
