@@ -176,6 +176,60 @@ function runningImageHash(pid) {
  * does not ask again; a new login, or a different file at that path, does.
  */
 const approved = new Map();
+/** Paths the user said no to this session: never asked about again. */
+const denied = new Set();
+/** One question at a time, and not one right after another. */
+let asking = false;
+let lastAsked = 0;
+const ASK_GAP_US = 60 * GLib.USEC_PER_SEC;
+
+/**
+ * Environment that makes a genuine Coucou binary run someone else's code:
+ * preloaded or audited libraries, a library path, a module path for GTK or
+ * GIO.
+ */
+const CODE_INJECTING_ENV = [
+    'LD_PRELOAD', 'LD_AUDIT', 'LD_LIBRARY_PATH', 'GTK_PATH', 'GIO_MODULE_DIR',
+];
+
+/**
+ * GTK modules are fine as bare names, which GTK looks up in the system's own
+ * folders — Ubuntu sets GTK_MODULES=gail:atk-bridge for every session. A path
+ * would load any file at all.
+ */
+const MODULE_LISTS = ['GTK_MODULES', 'GTK3_MODULES'];
+
+function injecting(variable) {
+    const at = variable.indexOf('=');
+    const name = variable.slice(0, at);
+    const value = variable.slice(at + 1);
+    if (at <= 0 || !value)
+        return false;
+    if (CODE_INJECTING_ENV.includes(name))
+        return true;
+    if (MODULE_LISTS.includes(name))
+        return value.split(/[:;,]/).some(m => m !== '' && !/^[A-Za-z0-9_-]+$/.test(m));
+    return false;
+}
+
+/**
+ * Whether the process runs other code than its own file: started with one of
+ * those variables, or under a debugger. Either way the right file proves
+ * nothing, so it is refused.
+ */
+function tampered(pid) {
+    try {
+        const [, environ] = GLib.file_get_contents(`/proc/${pid}/environ`);
+        const vars = new TextDecoder().decode(environ).split('\0');
+        if (vars.some(injecting))
+            return true;
+        const [, status] = GLib.file_get_contents(`/proc/${pid}/status`);
+        const tracer = /^TracerPid:\s*(\d+)/m.exec(new TextDecoder().decode(status));
+        return !tracer || tracer[1] !== '0';
+    } catch {
+        return true;
+    }
+}
 
 /**
  * Asks the user, in GNOME Shell's own dialog, whether the program at `path`
@@ -183,14 +237,22 @@ const approved = new Map();
  * answer is the user's. Unanswered, it is a no.
  */
 function askToAllow(path) {
+    // The path is shown on a line of its own, in quotes; a path that could
+    // fake a line of the dialog never gets this far (see trustedCoucou).
+    const home = GLib.get_home_dir();
+    const inHome = path.startsWith(`${home}/`);
     return new Promise(resolve => {
         const dialog = new ModalDialog.ModalDialog({destroyOnClose: true});
         const content = new Dialog.MessageDialogContent({
             title: 'Allow Coucou to use the island?',
             description:
-                `${path}\n\nThis program asks to put the Coucou island over the top bar, ` +
-                'to know where the pointer is and which window you are in, and to bring ' +
-                'windows to the front. Allow it only if you started Coucou from there.',
+                `“${path}”\n\n` +
+                'This program asks to put the Coucou island over the top bar, to know where ' +
+                'the pointer is and which window you are in, and to bring windows to the front. ' +
+                (inHome
+                    ? 'It lives in your home folder, where any program of yours could have put it. '
+                    : '') +
+                'Allow it only if you started Coucou from there yourself.',
         });
         dialog.contentLayout.add_child(content);
         let answered = false;
@@ -225,6 +287,12 @@ async function trustedCoucou(pid) {
     const path = executablePath(pid);
     if (!path || GLib.path_get_basename(path) !== APP_EXECUTABLE)
         return false;
+    // Nothing that could pass for another line of the dialog, nor a novel.
+    if (path.length > 512 || /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/.test(path))
+        return false;
+    // The right file running someone else's code is not Coucou.
+    if (tampered(pid))
+        return false;
     if (rootOwned(path))
         return true;
     const hash = await runningImageHash(pid);
@@ -232,8 +300,24 @@ async function trustedCoucou(pid) {
         return false;
     if (approved.get(path) === hash)
         return true;
-    if (!await askToAllow(path))
+    // No question again about a path already refused, none while one is up,
+    // and none right after the last: a program calling Register in a loop
+    // must not get to wear the user down.
+    const now = GLib.get_monotonic_time();
+    if (denied.has(path) || asking || (lastAsked && now - lastAsked < ASK_GAP_US))
         return false;
+    asking = true;
+    let yes = false;
+    try {
+        yes = await askToAllow(path);
+    } finally {
+        asking = false;
+        lastAsked = GLib.get_monotonic_time();
+    }
+    if (!yes) {
+        denied.add(path);
+        return false;
+    }
     approved.set(path, hash);
     return true;
 }
