@@ -2,7 +2,7 @@
 
 Coucou for Linux.
 
-## Unreleased
+## 0.2.1 — October 5, 2026
 
 - A question or permission answered in Claude Code's own window (VS Code) takes the island's card down too; it used to stay until clicked.
 - No more frozen, eyeless Mochi behind the live one after making it dizzy (three clicks) while a card was up.
