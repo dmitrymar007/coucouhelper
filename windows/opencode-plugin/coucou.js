@@ -111,6 +111,25 @@ export const Coucou = async ({ client, directory }) => {
   const open = new Set();
   /** Permission requests on the island: id → relay process. */
   const asking = new Map();
+  /** Per session: each answer's cost, and the context of the latest one. */
+  const spend = new Map();
+
+  function noteSpend(info) {
+    if (info?.role !== "assistant" || !info.sessionID || !info.id) return;
+    const s = spend.get(info.sessionID) ?? { costs: new Map(), context: 0 };
+    if (typeof info.cost === "number") s.costs.set(info.id, info.cost);
+    const t = info.tokens;
+    const context = t ? (t.input ?? 0) + (t.cache?.read ?? 0) + (t.cache?.write ?? 0) : 0;
+    if (context > 0) s.context = context;
+    spend.set(info.sessionID, s);
+  }
+
+  function spent(sessionID) {
+    const s = spend.get(sessionID);
+    if (!s) return {};
+    const cost = [...s.costs.values()].reduce((a, b) => a + b, 0);
+    return { cost, tokens: s.context };
+  }
 
   const base = (event, sessionID) => ({ hook_event_name: event, session_id: sessionID, cwd: directory });
   const send = (event, sessionID, extra = {}) => {
@@ -201,7 +220,7 @@ export const Coucou = async ({ client, directory }) => {
           if (children.has(p.sessionID)) {
             send("SubagentStop", children.get(p.sessionID));
           } else {
-            send("Stop", p.sessionID);
+            send("Stop", p.sessionID, spent(p.sessionID));
           }
           break;
         case "session.error":
@@ -212,9 +231,13 @@ export const Coucou = async ({ client, directory }) => {
         case "session.deleted":
           send("SessionEnd", p.info?.id ?? p.sessionID);
           open.delete(p.info?.id ?? p.sessionID);
+          spend.delete(p.info?.id ?? p.sessionID);
           break;
         case "permission.asked":
           void ask(p);
+          break;
+        case "message.updated":
+          noteSpend(p.info);
           break;
         case "question.asked":
           void askQuestion(p);

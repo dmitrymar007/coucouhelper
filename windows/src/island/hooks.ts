@@ -52,6 +52,10 @@ interface HookPayload {
   coucou_agent?: string;
   /** Linux relay: the session's ancestor processes, nearest first. */
   ancestor_pids?: unknown;
+  /** On Stop: what the session has cost (opencode) and the context its last
+   *  answer used (opencode's plugin; Claude Code's through the relay). */
+  cost?: number;
+  tokens?: number;
 }
 
 /** Plain process ids only, and not too many: "Open terminal" walks them. */
@@ -507,5 +511,46 @@ function handleHook(island: Island, payload: HookPayload) {
     default:
       break;
   }
+  noteSession(name, agentId, payload, projectName, cwd, pids);
   State.notify();
+}
+
+/** Keeps the agent's list of sessions in step with what each one does. */
+function noteSession(
+  name: string, agentId: string, payload: HookPayload, project: string, cwd: string, pids: number[],
+) {
+  const sid = payload.session_id ?? "";
+  if (!sid) return;
+  const where = { project, cwd, pids: pids.length ? pids : undefined };
+  const spent = {
+    cost: typeof payload.cost === "number" && Number.isFinite(payload.cost) ? payload.cost : undefined,
+    tokens: typeof payload.tokens === "number" && Number.isFinite(payload.tokens) ? payload.tokens : undefined,
+  };
+  switch (name) {
+    case "SessionStart":
+      State.noteSession(agentId, sid, { ...where, state: "idle", step: "Started" });
+      break;
+    case "UserPromptSubmit":
+      State.noteSession(agentId, sid, { ...where, state: "thinking", step: (payload.prompt ?? payload.message ?? "").slice(0, 80) });
+      break;
+    case "PreToolUse":
+      State.noteSession(agentId, sid, { ...where, state: "working", step: stepLabel(payload.tool_name ?? "Tool", payload.tool_input ?? {}) });
+      break;
+    case "PermissionRequest":
+      State.noteSession(agentId, sid, {
+        ...where,
+        state: payload.tool_name === "AskUserQuestion" ? "question" : "approval",
+        step: "Waiting for you",
+      });
+      break;
+    case "Stop":
+      State.noteSession(agentId, sid, { ...where, ...spent, state: "finished", step: payload.message?.slice(0, 80) || "Done" });
+      break;
+    case "StopFailure":
+      State.noteSession(agentId, sid, { ...where, state: "error", step: payload.message?.slice(0, 80) || "Failed" });
+      break;
+    case "SessionEnd":
+      State.endSession(agentId, sid);
+      break;
+  }
 }

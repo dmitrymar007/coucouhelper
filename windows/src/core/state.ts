@@ -21,6 +21,24 @@ export interface AgentTask {
   sessionCwd?: string | null;
   /** The session's ancestor processes (Linux), to find its terminal window. */
   sessionPids?: number[] | null;
+  /** Every live session of this agent, most recent first. */
+  sessions?: AgentSession[];
+}
+
+/** One session of an agent: one terminal, one project. */
+export interface AgentSession {
+  id: string;
+  project: string;
+  cwd: string;
+  pids: number[];
+  state: BotStateName;
+  /** What it did last. */
+  step: string;
+  /** Last event, ms since 1970. */
+  updated: number;
+  /** What the session has spent so far, when the agent says (opencode). */
+  cost?: number;
+  tokens?: number;
 }
 
 export interface ApprovalInfo {
@@ -229,6 +247,31 @@ class AppState {
     t.steps.push(step);
     if (t.steps.length > 20) t.steps.shift();
     t.stepIndex = t.steps.length - 1;
+    this.notify();
+  }
+
+  /** Records what a session of agent `id` just did; the newest goes first. */
+  noteSession(id: string, sessionId: string, patch: Partial<AgentSession>) {
+    const t = this.tasks.find((x) => x.id === id);
+    if (!t || !sessionId) return;
+    const list = t.sessions ?? [];
+    const prev = list.find((s) => s.id === sessionId);
+    const next: AgentSession = {
+      id: sessionId, project: "", cwd: "", pids: [], state: "idle", step: "",
+      ...prev,
+      ...Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined && v !== "")),
+      updated: Date.now(),
+    };
+    // Sessions quiet for half a day are gone, whatever they last said.
+    const stale = Date.now() - 12 * 3600_000;
+    t.sessions = [next, ...list.filter((s) => s.id !== sessionId && s.updated > stale)].slice(0, 8);
+    this.notify();
+  }
+
+  endSession(id: string, sessionId: string) {
+    const t = this.tasks.find((x) => x.id === id);
+    if (!t?.sessions) return;
+    t.sessions = t.sessions.filter((s) => s.id !== sessionId);
     this.notify();
   }
 

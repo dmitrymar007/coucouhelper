@@ -3,6 +3,7 @@
 // identically.
 
 import { h, svg, clear, dot } from "./dom";
+import { Bridge } from "../core/bridge";
 import { ICONS } from "./icons";
 import { Ticker } from "./ticker";
 import { State, type AgentTask } from "../core/state";
@@ -80,6 +81,71 @@ function stack(padLeft: number, padRight: number, ...children: Node[]): HTMLElem
   const el = h("div", { class: "stack" }, ...children);
   el.style.padding = `4px ${padRight}px 4px ${padLeft}px`;
   return el;
+}
+
+// ── Sessions ──────────────────────────────────────────────────────────────────
+
+const SESSION_COLORS: Partial<Record<string, string>> = {
+  working: "#60A5FA", thinking: "#A78BFA", approval: "#F5A524", question: "#22D3EE",
+  finished: "#22C55E", error: "#F4505E",
+};
+
+function ago(ms: number): string {
+  const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.round(s / 60)}m`;
+  return `${Math.round(s / 3600)}h`;
+}
+
+/**
+ * "$0.012 · 45.2k context": what a session has cost (opencode reports it; on
+ * a subscription there is nothing to pay per session) and how much of the
+ * model's context its last answer used.
+ */
+export function spentLabel(cost?: number, tokens?: number): string {
+  const parts: string[] = [];
+  if (cost != null && cost > 0) parts.push(`$${cost < 0.1 ? cost.toFixed(3) : cost.toFixed(2)}`);
+  if (tokens != null && tokens > 0) parts.push(tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k context` : `${tokens} context`);
+  return parts.join(" · ");
+}
+
+/** An agent's sessions, newest first; a click brings that session's terminal back. */
+function sessionList(task: AgentTask, onBack: () => void): HTMLElement {
+  const rows = h("div", { class: "sess-rows" });
+  for (const sess of task.sessions ?? []) {
+    const spent = spentLabel(sess.cost, sess.tokens);
+    rows.append(
+      h(
+        "button",
+        {
+          class: "sess-row",
+          title: sess.cwd,
+          onclick: () => void Bridge.focusTerminal(sess.pids, sess.cwd || null),
+        },
+        dot(SESSION_COLORS[sess.state] ?? "#6B7079", 6),
+        h("b", { text: sess.project || "Session" }),
+        h("span", { class: "sess-step", text: sess.step }),
+        h("span", { class: "sess-meta", text: spent ? `${spent} · ${ago(sess.updated)}` : ago(sess.updated) }),
+      ),
+    );
+  }
+  return h(
+    "div",
+    { class: "int-card detail" },
+    h(
+      "div",
+      { class: "int-detail-head" },
+      h("button", { class: "int-back", onclick: onBack }, svg(ICONS.chevronLeft, 10, { stroke: 2.4 })),
+      dot(task.color, 6),
+      h("b", { text: task.source === "claudeCode" ? "Claude Code" : task.name }),
+      h("span", {
+        class: "int-badge",
+        style: "color:#9398a1;background:rgba(255,255,255,0.08)",
+        text: `${task.sessions?.length ?? 0} sessions`,
+      }),
+    ),
+    rows,
+  );
 }
 
 // ── Header ────────────────────────────────────────────────────────────────────
@@ -188,7 +254,15 @@ function buildOverview(actions: ViewActions): ViewHost {
       const isAgent = task?.id === "integration_claude" || task?.source === "agent";
       const sessionActive = !!task && isAgent && (task.state !== "idle" || task.steps.length > 0);
 
-      if (task && sessionActive) {
+      if (task && sessionActive && detailOpen && (task.sessions?.length ?? 0) > 0) {
+        const key = `sessions~${task.id}~${JSON.stringify(task.sessions)}~${Math.floor(Date.now() / 30000)}`;
+        if (key !== cardKey) {
+          cardKey = key;
+          mode = "card";
+          clear(leftBody);
+          leftBody.append(sessionList(task, () => hooks.closeDetail()));
+        }
+      } else if (task && sessionActive) {
         if (mode !== "ticker") {
           clear(leftBody);
           leftBody.append(tickerBody);
@@ -215,6 +289,14 @@ function buildOverview(actions: ViewActions): ViewHost {
             class: "count",
             text: `${Math.min(task.stepIndex + 1, task.steps.length)}/${task.steps.length}`,
           }));
+        }
+        // Several sessions at once: a chip opens the list of them.
+        const sessions = task.sessions ?? [];
+        if (sessions.length > 1) {
+          who.append(h("button", { class: "sess-chip", text: `${sessions.length} sessions`, onclick: () => hooks.openDetail() }));
+        } else if (sessions[0]) {
+          const spent = spentLabel(sessions[0].cost, sessions[0].tokens);
+          if (spent) who.append(h("span", { class: "count", text: spent }));
         }
         ticker.sync(task);
       } else if (task) {

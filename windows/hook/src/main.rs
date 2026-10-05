@@ -160,6 +160,18 @@ fn read_event() -> Option<(String, String, Option<serde_json::Value>)> {
         .unwrap_or(arg_event);
     map.insert("hook_event_name".into(), serde_json::Value::String(event.clone()));
 
+    // How full the model's context is: from the session's own transcript, on
+    // Stop only. The transcript itself never leaves this process.
+    if event == "Stop" && !map.contains_key("tokens") {
+        let tokens = map
+            .get("transcript_path")
+            .and_then(|v| v.as_str())
+            .and_then(|path| context_tokens(std::path::Path::new(path)));
+        if let Some(tokens) = tokens {
+            map.insert("tokens".into(), serde_json::json!(tokens));
+        }
+    }
+
     for field in DROPPED_FIELDS {
         map.remove(*field);
     }
@@ -210,6 +222,32 @@ fn read_event() -> Option<(String, String, Option<serde_json::Value>)> {
     let mut line = payload.to_string();
     line.push('\n');
     Some((line, event, questions))
+}
+
+/// Longest transcript read for the context size; beyond it, none is given.
+const MAX_TRANSCRIPT: u64 = 64 * 1024 * 1024;
+
+/// The context the session's last answer used: its input tokens plus what it
+/// read from and wrote to the prompt cache, from the last usage line of the
+/// transcript (JSONL, one message per line).
+fn context_tokens(path: &std::path::Path) -> Option<u64> {
+    if std::fs::metadata(path).ok()?.len() > MAX_TRANSCRIPT {
+        return None;
+    }
+    let text = std::fs::read_to_string(path).ok()?;
+    text.lines().rev().find_map(|line| {
+        if !line.contains("\"usage\"") {
+            return None;
+        }
+        let v: serde_json::Value = serde_json::from_str(line).ok()?;
+        usage_context(v.get("message")?.get("usage")?)
+    })
+}
+
+fn usage_context(usage: &serde_json::Value) -> Option<u64> {
+    let n = |k: &str| usage.get(k).and_then(|v| v.as_u64()).unwrap_or(0);
+    let total = n("input_tokens") + n("cache_read_input_tokens") + n("cache_creation_input_tokens");
+    (total > 0).then_some(total)
 }
 
 /// Caps every string in the payload. A single Write can carry a whole file.
@@ -303,6 +341,28 @@ mod tests {
         assert!(decision_json("maybe", None).is_none());
         // The shape the app used to send must not be mistaken for a decision.
         assert!(decision_json(r#"{"permissionDecision":"allow"}"#, None).is_none());
+    }
+
+    #[test]
+    fn the_context_comes_from_the_last_answer() {
+        let dir = std::env::temp_dir().join(format!("coucou-hook-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("t.jsonl");
+        std::fs::write(
+            &path,
+            [
+                r#"{"type":"assistant","message":{"usage":{"input_tokens":10,"cache_read_input_tokens":1000,"output_tokens":5}}}"#,
+                r#"{"type":"user","message":{"content":"hi"}}"#,
+                r#"{"type":"assistant","message":{"usage":{"input_tokens":3,"cache_read_input_tokens":40000,"cache_creation_input_tokens":2000,"output_tokens":800}}}"#,
+                r#"{"type":"user","message":{"content":"next"}}"#,
+            ]
+            .join("\n"),
+        )
+        .unwrap();
+        assert_eq!(context_tokens(&path), Some(42003));
+        std::fs::write(&path, "not json\n").unwrap();
+        assert_eq!(context_tokens(&path), None);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
