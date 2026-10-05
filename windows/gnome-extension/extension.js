@@ -142,6 +142,8 @@ class Island {
         this._windowSignals = [];
         this._pointerSource = 0;
         this._lastPointer = null;
+        /** When the user last pressed a button over the island (µs, monotonic). */
+        this._islandPressAt = 0;
         // Where the user is right now, for the chat's context until focus moves.
         const focused = global.display.focus_window;
         this._lastFocus = isUserWindow(focused) ? focused : null;
@@ -321,6 +323,14 @@ class Island {
         const name = GLib.path_get_basename(path);
         if (GLib.path_get_dirname(path) !== inbox || !/^window-\d{1,20}\.png$/.test(name))
             return NOTHING;
+        // Wayland lets no app read the screen without the user's say-so. Here
+        // the say-so is a real click on the island in the last few seconds —
+        // the chat's camera button — and it buys exactly one screenshot: no
+        // process can make the extension capture a window behind the user's back.
+        const sincePress = GLib.get_monotonic_time() - this._islandPressAt;
+        this._islandPressAt = 0;
+        if (sincePress > 3 * GLib.USEC_PER_SEC)
+            return NOTHING;
         const win = this._lastFocus;
         if (!isUserWindow(win) || !win.get_compositor_private() || win.minimized)
             return NOTHING;
@@ -439,6 +449,9 @@ class Island {
         const y = py - rect.y;
         const pressed = (mods & BUTTONS) !== 0;
         const last = this._lastPointer;
+        // A real press over the island: what entitles Coucou to one screenshot.
+        if (pressed && !last?.[2] && x >= 0 && y >= 0 && x < rect.width && y < rect.height)
+            this._islandPressAt = GLib.get_monotonic_time();
         if (last && last[0] === x && last[1] === y && last[2] === pressed)
             return;
         this._lastPointer = [x, y, pressed];
