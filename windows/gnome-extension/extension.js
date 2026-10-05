@@ -23,7 +23,9 @@ import GLib from 'gi://GLib';
 import Meta from 'gi://Meta';
 import Shell from 'gi://Shell';
 
+import * as Dialog from 'resource:///org/gnome/shell/ui/dialog.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+import * as ModalDialog from 'resource:///org/gnome/shell/ui/modalDialog.js';
 import * as Workspace from 'resource:///org/gnome/shell/ui/workspace.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
@@ -39,7 +41,7 @@ const BUTTONS =
     Clutter.ModifierType.BUTTON2_MASK |
     Clutter.ModifierType.BUTTON3_MASK;
 
-/** Coucou's executable is called this in every build: deb, rpm, AppImage, cargo. */
+/** Coucou's executable is called this in every build — necessary, never enough. */
 const APP_EXECUTABLE = 'coucou';
 
 /**
@@ -120,14 +122,120 @@ async function senderPid(sender) {
     return reply.deepUnpack()[0];
 }
 
-/** File name of a process's executable, or null when it cannot be read. */
-function executableName(pid) {
+/** Path of a process's executable, or null when it cannot be read or is gone. */
+function executablePath(pid) {
     try {
         const path = GLib.file_read_link(`/proc/${pid}/exe`);
-        return GLib.path_get_basename(path).replace(/ \(deleted\)$/, '');
+        return path.endsWith(' (deleted)') ? null : path;
     } catch {
         return null;
     }
+}
+
+/**
+ * Whether `path` and every folder above it belong to root and only root may
+ * write to them: a packaged install (/usr/bin/coucou) that no program running
+ * as the user can replace or sit beside.
+ */
+function rootOwned(path) {
+    let at = path;
+    for (;;) {
+        let info;
+        try {
+            info = Gio.File.new_for_path(at).query_info(
+                'unix::uid,unix::mode', Gio.FileQueryInfoFlags.NOFOLLOW_SYMLINKS, null);
+        } catch {
+            return false;
+        }
+        if (info.get_attribute_uint32('unix::uid') !== 0 ||
+            (info.get_attribute_uint32('unix::mode') & 0o022) !== 0)
+            return false;
+        if (at === '/')
+            return true;
+        at = GLib.path_get_dirname(at);
+    }
+}
+
+/** SHA-256 of the image a process is running — not of whatever sits at its path now. */
+function runningImageHash(pid) {
+    return new Promise(resolve => {
+        Gio.File.new_for_path(`/proc/${pid}/exe`).load_contents_async(null, (file, res) => {
+            try {
+                const [, bytes] = file.load_contents_finish(res);
+                resolve(GLib.compute_checksum_for_data(GLib.ChecksumType.SHA256, bytes));
+            } catch {
+                resolve(null);
+            }
+        });
+    });
+}
+
+/**
+ * Coucou builds the user allowed this session: path → hash of the image. Kept
+ * at module level, so locking the screen (which disables user extensions)
+ * does not ask again; a new login, or a different file at that path, does.
+ */
+const approved = new Map();
+
+/**
+ * Asks the user, in GNOME Shell's own dialog, whether the program at `path`
+ * may drive the island. No app can click a Shell dialog on Wayland, so the
+ * answer is the user's. Unanswered, it is a no.
+ */
+function askToAllow(path) {
+    return new Promise(resolve => {
+        const dialog = new ModalDialog.ModalDialog({destroyOnClose: true});
+        const content = new Dialog.MessageDialogContent({
+            title: 'Allow Coucou to use the island?',
+            description:
+                `${path}\n\nThis program asks to put the Coucou island over the top bar, ` +
+                'to know where the pointer is and which window you are in, and to bring ' +
+                'windows to the front. Allow it only if you started Coucou from there.',
+        });
+        dialog.contentLayout.add_child(content);
+        let answered = false;
+        const answer = yes => {
+            if (answered)
+                return;
+            answered = true;
+            GLib.source_remove(timer);
+            dialog.close();
+            resolve(yes);
+        };
+        const timer = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 110, () => {
+            answer(false);
+            return GLib.SOURCE_REMOVE;
+        });
+        dialog.setButtons([
+            {label: 'Deny', action: () => answer(false), key: Clutter.KEY_Escape},
+            {label: 'Allow', action: () => answer(true)},
+        ]);
+        if (!dialog.open())
+            answer(false);
+    });
+}
+
+/**
+ * Whether the process `pid` is a Coucou the user stands behind: a packaged
+ * install, or a build at a path the user allowed this session, still the
+ * same file. The executable's name alone proves nothing — any program can
+ * copy a binary under the name coucou.
+ */
+async function trustedCoucou(pid) {
+    const path = executablePath(pid);
+    if (!path || GLib.path_get_basename(path) !== APP_EXECUTABLE)
+        return false;
+    if (rootOwned(path))
+        return true;
+    const hash = await runningImageHash(pid);
+    if (!hash)
+        return false;
+    if (approved.get(path) === hash)
+        return true;
+    if (!await askToAllow(path))
+        return false;
+    approved.set(path, hash);
+    return true;
 }
 
 /** The one island being looked after, and the app that owns it. */
@@ -543,8 +651,8 @@ export default class CoucouIslandExtension extends Extension {
             // reporting the pointer to it is more than Wayland gives any app:
             // only Coucou gets it, and an island already looked after is not
             // handed to anyone else while its owner is around.
-            if (executableName(pid) !== APP_EXECUTABLE)
-                throw new Error('only the Coucou app can register');
+            if (!await trustedCoucou(pid))
+                throw new Error('only a Coucou the user stands behind can register');
             if (this._island && this._island.sender !== sender)
                 throw new Error('another Coucou island is registered');
             this._island?.destroy();

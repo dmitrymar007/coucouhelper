@@ -2,6 +2,7 @@
 
 ## Unreleased (coucouhelper, Linux)
 
+- GNOME extension: only a Coucou you stand behind may drive the island. A packaged install is trusted as is; any other build (a cargo build, an AppImage) makes GNOME Shell ask you once per session. Before, any program could copy a binary under the name coucou and see your pointer and windows.
 - Questions from an agent are answered on the island: Claude Code's AskUserQuestion and opencode's question tool show their options as buttons (one question after the other, several picks where allowed), or go back to the terminal. Before, Allow on such a card would have let Claude Code run the question with no answer.
 - Several sessions of one agent: a chip in its card lists them — project, state, last step — and brings the chosen session's terminal back. Each session shows the context its last answer used, and opencode sessions their cost.
 - The opencode pill stays up while its plugin is installed and shows its steps like Claude Code's; it used to show "Key not configured" and vanish after each answer.

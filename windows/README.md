@@ -228,8 +228,13 @@ What changes on Linux:
   Alt+Tab, the overview and the dock, keeps the keyboard away from it unless
   the chat needs it, moves the clock to the left end of the bar while the
   island is there, and tells Coucou where the pointer is while the island is
-  open. It talks to Coucou over D-Bus and only to Coucou: it checks that the
-  caller's executable is `coucou`. Locking the screen turns it off, like every
+  open. It talks to Coucou over D-Bus and only to a Coucou you stand behind:
+  the executable must be called `coucou`, and either belong to a packaged
+  install (`/usr/bin/coucou`, root-owned all the way up, which no program of
+  yours can replace) or be allowed by you — any other build makes GNOME Shell
+  ask, in its own dialog no app can click, whether that file may drive the
+  island. The answer holds for the session and for that exact file: a
+  different file at the same path is asked about again. Locking the screen turns it off, like every
   user extension, and Coucou picks it up again after unlocking.
 - **GNOME without the extension**: for now Coucou runs there through
   Xwayland, where the island is an X11 dock window centred right below the

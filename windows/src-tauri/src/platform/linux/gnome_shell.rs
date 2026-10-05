@@ -135,10 +135,19 @@ fn register(connection: gio::DBusConnection, owner: String) {
         Some(&(WINDOW_TITLE,).to_variant()),
         Some(glib::VariantTy::new("(u)").unwrap()),
         gio::DBusCallFlags::NONE,
-        3000,
+        // A build outside a packaged install makes GNOME ask the user first:
+        // leave them the time to answer.
+        120_000,
         None::<&gio::Cancellable>,
         move |reply| {
-            let protocol = reply.ok().and_then(|v| v.get::<(u32,)>()).map(|(p,)| p);
+            let reply = match reply {
+                Ok(v) => v,
+                Err(err) => {
+                    crate::log::line(format!("GNOME extension: registration refused or unanswered ({err})"));
+                    return;
+                }
+            };
+            let protocol = reply.get::<(u32,)>().map(|(p,)| p);
             if protocol != Some(PROTOCOL) {
                 crate::log::line(format!("GNOME extension: not usable (protocol {protocol:?})"));
                 return;
