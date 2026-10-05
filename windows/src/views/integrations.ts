@@ -67,14 +67,18 @@ function idleCard(task: AgentTask, openSettings: () => void): HTMLElement {
 
   const actions = h("div", { class: "int-actions" });
   if (task.id === "integration_claude") {
-    actions.append(
-      h("button", {
-        class: "link-btn",
-        style: `color:${task.color}b3`,
-        text: "Open Visual Studio Code",
-        onclick: () => void Bridge.openInVSCode(task.sessionCwd ?? null),
-      }),
-    );
+    // Claude Code runs in any terminal: bring back the last session's window,
+    // when there was one.
+    if (task.sessionPids?.length || task.sessionCwd) {
+      actions.append(
+        h("button", {
+          class: "link-btn",
+          style: `color:${task.color}b3`,
+          text: "Open terminal",
+          onclick: () => void Bridge.focusTerminal(task.sessionPids ?? [], task.sessionCwd ?? null),
+        }),
+      );
+    }
   } else if (task.id === "integration_n8n") {
     actions.append(
       h("button", {
@@ -112,7 +116,7 @@ function idleCard(task: AgentTask, openSettings: () => void): HTMLElement {
   return h(
     "div",
     { class: "int-card" },
-    header(task.color, task.id === "integration_claude" ? "VS Code" : task.name, "Integration"),
+    header(task.color, task.name, task.id === "integration_claude" ? "Agent" : "Integration"),
     h("div", { class: "int-status" }, dot(statusColor, 5), h("span", { text: label })),
     actions,
   );

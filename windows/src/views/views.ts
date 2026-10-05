@@ -234,7 +234,7 @@ function buildOverview(actions: ViewActions): ViewHost {
 }
 
 function buildPill(task: AgentTask, actions: ViewActions): HTMLElement {
-  const label = task.id === "integration_claude" ? "VS Code" : task.name;
+  const label = task.name;
   const canvas = createMiniBot(task, 24);
   const pill = h(
     "div",
@@ -350,19 +350,23 @@ function buildError(actions: ViewActions): ViewHost {
   const who = h("div");
   const title = h("div", { class: "title", text: "Workflow stopped." });
   const detail = h("div", { class: "detail" });
-  const row = h("div", { class: "actions" },
-    btn("Retry", "primary", () => actions.setView(State.defaultView())),
-    btn("Open in n8n", "secondary", () => actions.openUrl("")),
-  );
+  // Only buttons that do something: n8n opens the instance, an agent's error
+  // brings its terminal back. ("Retry" used to just close the card.)
+  const openN8n = btn("Open n8n", "primary", () => actions.openTarget());
+  const openTerm = btn("Open terminal", "primary", () => actions.openTerminal());
+  const row = h("div", { class: "actions" }, openN8n, openTerm, btn("OK", "secondary", () => actions.collapse()));
   const el = h("div", { class: "view" }, card("red", stack(116, 16, who, title, detail, row)));
   return {
     el,
     sync() {
       const task = State.focusTask;
+      const n8n = task?.source === "n8n";
       clear(who);
-      who.append(agentWho(task, task?.source === "n8n" ? "n8n" : "Claude Code"));
-      title.textContent = task?.source === "n8n" ? "Workflow stopped." : "Session stopped on an error.";
+      who.append(agentWho(task, n8n ? "" : "stopped on an error"));
+      title.textContent = n8n ? "Workflow stopped." : "Session stopped on an error.";
       detail.textContent = task?.steps.at(-1) ?? "No detail available.";
+      openN8n.style.display = n8n ? "" : "none";
+      openTerm.style.display = n8n ? "none" : "";
     },
   };
 }
@@ -381,7 +385,7 @@ function buildFinished(actions: ViewActions): ViewHost {
     el,
     sync() {
       clear(who);
-      who.append(agentWho(State.focusTask, "Claude Code finished"));
+      who.append(agentWho(State.focusTask, "finished"));
       title.textContent = State.focusTask?.steps.at(-1) ?? "Session finished";
     },
   };
