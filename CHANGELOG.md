@@ -2,6 +2,11 @@
 
 ## Unreleased (coucouhelper, Linux)
 
+- Questions from an agent are answered on the island: Claude Code's AskUserQuestion and opencode's question tool show their options as buttons (one question after the other, several picks where allowed), or go back to the terminal. Before, Allow on such a card would have let Claude Code run the question with no answer.
+- Several sessions of one agent: a chip in its card lists them — project, state, last step — and brings the chosen session's terminal back. Each session shows the context its last answer used, and opencode sessions their cost.
+- The opencode pill stays up while its plugin is installed and shows its steps like Claude Code's; it used to show "Key not configured" and vanish after each answer.
+- Chat: the model is picked from the input bar; a PDF reaches any opencode model as its text (pdftotext); with the GNOME extension, the camera button asks about the window you were in from a screenshot; answers show code blocks and can be copied.
+- The island's error card has no dead buttons any more, the Claude Code pill is called Claude Code instead of VS Code, and a pill badged for a waiting request opens it.
 - Send by email works to the end: the file is really attached in Thunderbird (snap included) and other mail apps, and the card after a drop shows Ask a question and Send by email side by side instead of one long button.
 - opencode sessions on the island: Settings → opencode → Install plugin. Each session gets its own pill (prompt, tools, done, failed) and its permission requests an approval card with Allow and Deny; answering in opencode first takes the card down.
 - An approval card now goes away as soon as the question is answered in the terminal, instead of staying up until it times out.

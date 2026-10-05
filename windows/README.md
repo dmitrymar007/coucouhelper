@@ -104,6 +104,20 @@ first, the terminal or the island, decides, and the card goes away when the
 terminal wins. The plugin talks to Coucou through the same relay as Claude
 Code's hooks, and stays out of Coucou's own opencode chat.
 
+In the chat itself, the end of the input bar shows the model in use — click
+it to pick another from the backend's list. A PDF dropped for the opencode
+chat goes as its text (`pdftotext`), since OpenAI-compatible providers take no
+documents. With the GNOME extension, the camera button takes a screenshot of
+the window you were in and makes it the subject of a new chat. Code in answers
+shows as blocks, and every answer and code block has a copy button.
+
+**Questions and sessions.** When Claude Code (AskUserQuestion) or opencode (its
+question tool) asks you something, the island shows the options as buttons;
+"In terminal" hands the question back. An agent with several sessions at once
+gets a chip in its card listing them, with each one's project, state, last step
+and the context its last answer used (plus the cost, for opencode); a row
+brings that session's terminal back.
+
 The third backend, **Anthropic API key**, works as before:
 **Settings… → Claude** takes your Anthropic API key. Keys live in the **Windows
 Credential Manager**, never on disk and never in the interface — the island can
