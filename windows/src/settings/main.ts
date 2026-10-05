@@ -5,6 +5,7 @@
 import "./settings.css";
 import { Bridge, onEvent, type HookStatus, type OpencodePluginStatus, type ShellExtensionStatus } from "../core/bridge";
 import { DEFAULT_SETTINGS, type Settings } from "../core/state";
+import { API_MODELS, CLI_MODELS } from "../core/models";
 import { h, clear } from "../views/dom";
 
 let settings: Settings = { ...DEFAULT_SETTINGS };
@@ -173,11 +174,6 @@ function claudeSection(status: HookStatus): HTMLElement {
 
 // ── Chat section ──────────────────────────────────────────────────────────────
 
-const CLI_MODELS: [string, string][] = [
-  ["sonnet", "Claude Sonnet"],
-  ["opus", "Claude Opus"],
-  ["haiku", "Claude Haiku"],
-];
 
 const IDLE_CHOICES: [number, string][] = [
   [10, "after 10 minutes idle"],
@@ -535,11 +531,6 @@ function gnomeSection(initial: ShellExtensionStatus): HTMLElement {
 
 // ── Claude API section ────────────────────────────────────────────────────────
 
-const MODELS: [string, string][] = [
-  ["claude-opus-5", "Claude Opus 5"],
-  ["claude-sonnet-5", "Claude Sonnet 5"],
-  ["claude-haiku-4-5", "Claude Haiku 4.5"],
-];
 
 function apiSection(hasKey: boolean): HTMLElement {
   const dot = statusDot(hasKey);
@@ -593,8 +584,8 @@ function apiSection(hasKey: boolean): HTMLElement {
   });
 
   const model = h("select", {}) as HTMLSelectElement;
-  for (const [id, label] of MODELS) model.append(h("option", { value: id, text: label }));
-  if (!MODELS.some(([id]) => id === settings.model)) {
+  for (const [id, label] of API_MODELS) model.append(h("option", { value: id, text: label }));
+  if (!API_MODELS.some(([id]) => id === settings.model)) {
     model.append(h("option", { value: settings.model, text: settings.model }));
   }
   model.value = settings.model;

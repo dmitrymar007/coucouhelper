@@ -147,6 +147,34 @@ fn first_message(query: &str, context: Option<&ChatContext>) -> (String, Option<
     }
 }
 
+/// Longest PDF text sent with a question, in characters.
+const MAX_PDF_TEXT: usize = 200_000;
+
+/// The text of a PDF, through `pdftotext`. Providers that speak the
+/// OpenAI-compatible API (AnyModel, OpenRouter…) take no documents, so the
+/// chat sends a PDF's text instead of the file. None when there is no
+/// pdftotext or no text to get (a scan), and the file goes as it is.
+async fn pdf_text(path: &str) -> Option<String> {
+    if !path.to_lowercase().ends_with(".pdf") {
+        return None;
+    }
+    let exe = platform::find_on_path("pdftotext")?;
+    let out = tokio::time::timeout(
+        Duration::from_secs(30),
+        Command::new(exe).args(["-enc", "UTF-8", "-layout", "--", path, "-"]).stdin(Stdio::null()).output(),
+    )
+    .await
+    .ok()?
+    .ok()?;
+    let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if !out.status.success() || text.is_empty() {
+        return None;
+    }
+    let cut: String = text.chars().take(MAX_PDF_TEXT).collect();
+    let note = if cut.len() < text.len() { "\n[… the rest of the PDF was cut]" } else { "" };
+    Some(format!("{cut}{note}"))
+}
+
 /// "provider/model" → opencode's model object. The model part may itself
 /// contain slashes ("openrouter/minimax/minimax-m3:free").
 pub fn model_ref(model: &str) -> Option<Value> {
@@ -519,7 +547,13 @@ impl OpenCodeChat {
         };
 
         let existing = self.session.lock().unwrap().clone();
-        let (text, file) = if existing.is_none() { first_message(query, context) } else { (query.to_string(), None) };
+        let (mut text, mut file) = if existing.is_none() { first_message(query, context) } else { (query.to_string(), None) };
+        if let Some(pdf) = file.clone() {
+            if let Some(body) = pdf_text(&pdf).await {
+                text = format!("Text of the PDF:\n<<<\n{body}\n>>>\n\n{text}");
+                file = None;
+            }
+        }
         let session = match existing {
             Some(id) => id,
             None => {
@@ -760,6 +794,45 @@ mod tests {
             assert_eq!(shown.len(), 4, "{shown:?}");
             assert_eq!(shown[0].content, "Remember the number 42. Answer with one word: ok.");
         });
+    }
+
+    #[test]
+    fn a_pdfs_text_comes_through_pdftotext() {
+        if platform::find_on_path("pdftotext").is_none() {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("coucou-pdf-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let pdf = dir.join("s.pdf");
+        // A one-page PDF saying "Secret word: blueberry".
+        let stream = b"BT /F1 18 Tf 20 50 Td (Secret word: blueberry) Tj ET";
+        let objs: Vec<Vec<u8>> = vec![
+            b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 100] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>".to_vec(),
+            [format!("<< /Length {} >>\nstream\n", stream.len()).into_bytes(), stream.to_vec(), b"\nendstream".to_vec()].concat(),
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_vec(),
+        ];
+        let mut out = b"%PDF-1.4\n".to_vec();
+        let mut offs = Vec::new();
+        for (i, o) in objs.iter().enumerate() {
+            offs.push(out.len());
+            out.extend(format!("{} 0 obj\n", i + 1).into_bytes());
+            out.extend(o);
+            out.extend(b"\nendobj\n");
+        }
+        let xref = out.len();
+        out.extend(format!("xref\n0 {}\n0000000000 65535 f \n", objs.len() + 1).into_bytes());
+        for o in offs {
+            out.extend(format!("{o:010} 00000 n \n").into_bytes());
+        }
+        out.extend(format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objs.len() + 1).into_bytes());
+        std::fs::write(&pdf, out).unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let text = rt.block_on(pdf_text(pdf.to_str().unwrap())).expect("text");
+        assert!(text.contains("Secret word: blueberry"), "{text}");
+        assert!(rt.block_on(pdf_text("/x/not-a-pdf.txt")).is_none());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

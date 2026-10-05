@@ -71,17 +71,23 @@ fn boot(app: AppHandle, shared: State<Shared>) -> BootInfo {
 
 #[tauri::command]
 fn save_settings(app: AppHandle, shared: State<Shared>, chat: State<Chat>, mut settings: Settings) {
-    let (screen_changed, autostart_changed, backend_changed) = {
+    let (screen_changed, autostart_changed, backend_changed, cli_model_changed) = {
         let mut current = shared.settings.lock().unwrap();
         let screen_changed = current.screen != settings.screen;
         let autostart_changed = current.autostart != settings.autostart;
         let backend_changed = current.chat_backend != settings.chat_backend;
+        // Claude Code takes its model when it starts: a new one needs a new
+        // process, which resumes the same conversation.
+        let cli_model_changed = current.cli_model != settings.cli_model;
         // Rust keeps these up to date; a window's copy of them may be stale.
         settings.last_chat_session = current.last_chat_session.clone();
         settings.shell_hint_shown = current.shell_hint_shown;
         *current = settings.clone();
-        (screen_changed, autostart_changed, backend_changed)
+        (screen_changed, autostart_changed, backend_changed, cli_model_changed)
     };
+    if cli_model_changed && !backend_changed {
+        chat.stop();
+    }
     // The other backend knows nothing of this conversation: start a new one.
     if backend_changed {
         chat.reset();

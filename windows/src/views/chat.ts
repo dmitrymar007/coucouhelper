@@ -6,6 +6,7 @@ import { ICONS } from "./icons";
 import { Bridge, onEvent, type ChatContext, type ChatSession, type ChatStreamUpdate } from "../core/bridge";
 import { Sound } from "../core/sound";
 import { State, type ChatMessage } from "../core/state";
+import { API_MODELS, CLI_MODELS } from "../core/models";
 import type { ViewHost } from "./views";
 
 let nextId = 1;
@@ -44,6 +45,17 @@ function windowLabel(app: string, title: string): string {
   return label.length > 60 ? `${label.slice(0, 59)}…` : label;
 }
 
+/** The model the chat answers with, as short as the bar allows. */
+function modelLabel(): string {
+  const s = State.settings;
+  if (s.chatBackend === "opencode") {
+    if (!s.opencodeModel) return "opencode default";
+    return s.opencodeModel.slice(s.opencodeModel.indexOf("/") + 1);
+  }
+  if (s.chatBackend === "api-key") return API_MODELS.find(([id]) => id === s.model)?.[1] ?? s.model;
+  return CLI_MODELS.find(([id]) => id === s.cliModel)?.[1] ?? s.cliModel;
+}
+
 /** The coloured chip showing what the question is about (a dropped file). */
 function contextChip(label: string): HTMLElement {
   const chip = h("div", { class: "chip" }, h("i", { class: "chip-dot" }), h("span", { text: label }));
@@ -63,14 +75,17 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
   const send = h("button", { class: "send-btn", title: "Send" }, svg(ICONS.arrowUp, 11));
   const newBtn = h("button", { class: "bar-btn", title: "New chat" }, svg(ICONS.compose, 14));
   const historyBtn = h("button", { class: "bar-btn", title: "Earlier chats" }, svg(ICONS.clock, 14));
-  const bar = h("div", { class: "chat-bar" }, newBtn, historyBtn, input, send);
+  const modelBtn = h("button", { class: "model-btn", title: "Model" }) as HTMLButtonElement;
+  const bar = h("div", { class: "chat-bar" }, newBtn, historyBtn, input, modelBtn, send);
   /** Earlier conversations, shown in place of the log. */
   const history = h("div", { class: "chat-history" });
+  /** The backend's models, also shown in place of the log. */
+  const models = h("div", { class: "chat-history" });
 
   const el = h(
     "div",
     { class: "view" },
-    h("div", { class: "card wash chat-card" }, h("div", { class: "chat-body" }, chipRow, log, history, bar)),
+    h("div", { class: "card wash chat-card" }, h("div", { class: "chat-body" }, chipRow, log, history, models, bar)),
   );
   (el.querySelector(".card") as HTMLElement).style.setProperty("--wash", "rgba(99,102,241,0.5)");
 
@@ -186,7 +201,69 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
     return row;
   }
 
+  let modelsOpen = false;
+
+  /** One model to pick; the chosen one is marked. */
+  function modelRow(id: string, label: string, chosen: boolean, pick: () => void): HTMLElement {
+    const row = h(
+      "button",
+      { class: chosen ? "history-row current" : "history-row" },
+      h("span", { class: "history-title", text: label }),
+      h("span", { class: "history-meta", text: chosen ? "in use" : id }),
+    );
+    row.addEventListener("click", () => {
+      pick();
+      void Bridge.saveSettings(State.settings);
+      Sound.play("blip");
+      void showModels(false);
+      State.notify();
+    });
+    return row;
+  }
+
+  async function showModels(open: boolean) {
+    modelsOpen = open;
+    if (open && historyOpen) await showHistory(false);
+    modelBtn.classList.toggle("on", open);
+    log.style.display = open ? "none" : "";
+    models.style.display = open ? "" : "none";
+    if (!open) {
+      input.focus();
+      return;
+    }
+    clear(models);
+    const s = State.settings;
+    if (s.chatBackend === "claude-code") {
+      for (const [id, label] of CLI_MODELS) {
+        models.append(modelRow(id, label, s.cliModel === id, () => (s.cliModel = id)));
+      }
+      return;
+    }
+    if (s.chatBackend === "api-key") {
+      for (const [id, label] of API_MODELS) {
+        models.append(modelRow(id, label, s.model === id, () => (s.model = id)));
+      }
+      return;
+    }
+    models.append(modelRow("", "opencode's default", !s.opencodeModel, () => (s.opencodeModel = "")));
+    const list = (await Bridge.chatOpencodeModels()) ?? [];
+    if (!modelsOpen) return;
+    // Grouped by provider, the user's own first; OpenCode Zen last.
+    const providers = [...new Set(list.map((m) => m.slice(0, m.indexOf("/"))))].sort((a, b) =>
+      a === "opencode" ? 1 : b === "opencode" ? -1 : a.localeCompare(b),
+    );
+    for (const provider of providers) {
+      models.append(h("div", { class: "history-empty", text: provider === "opencode" ? "OpenCode Zen" : provider }));
+      for (const id of list.filter((m) => m.startsWith(`${provider}/`)).sort()) {
+        models.append(modelRow(id, id.slice(provider.length + 1), s.opencodeModel === id, () => (s.opencodeModel = id)));
+      }
+    }
+  }
+  models.style.display = "none";
+  modelBtn.addEventListener("click", () => void showModels(!modelsOpen));
+
   async function showHistory(open: boolean) {
+    if (open && modelsOpen) await showModels(false);
     historyOpen = open;
     historyBtn.classList.toggle("on", open);
     log.style.display = open ? "none" : "";
@@ -242,6 +319,10 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
       }
 
       input.placeholder = State.chatHistory.length === 0 ? "Ask me anything…" : "Continue…";
+      const label = modelLabel();
+      if (modelBtn.textContent !== label) modelBtn.textContent = label;
+      modelBtn.toggleAttribute("disabled", sending);
+      if (modelsOpen && sending) void showModels(false);
       input.disabled = sending;
       newBtn.toggleAttribute("disabled", sending);
       // Only Claude Code and opencode keep conversations to come back to.
