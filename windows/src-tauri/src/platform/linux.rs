@@ -150,6 +150,14 @@ pub fn last_focused_window() -> Option<(String, String)> {
     gnome_shell::last_focused_window()
 }
 
+/// A screenshot of the window the user was in, saved to `path`: (app, title).
+pub fn capture_window(path: &str) -> Option<(String, String)> {
+    if !gnome_shell::active() {
+        return None;
+    }
+    gnome_shell::capture_window(path)
+}
+
 /// (app, window title) under a point relative to the island. Main thread.
 pub fn window_at(x: f64, y: f64, done: impl FnOnce(Option<(String, String)>) + 'static) {
     if !gnome_shell::active() {

@@ -74,6 +74,12 @@ const iface = (extraMethods = '') => `<node>
       <arg type="s" name="app" direction="out"/>
       <arg type="s" name="title" direction="out"/>
     </method>
+    <method name="CaptureWindow">
+      <arg type="s" name="path" direction="in"/>
+      <arg type="b" name="found" direction="out"/>
+      <arg type="s" name="app" direction="out"/>
+      <arg type="s" name="title" direction="out"/>
+    </method>
     <method name="WindowAt">
       <arg type="d" name="x" direction="in"/>
       <arg type="d" name="y" direction="in"/>
@@ -305,6 +311,47 @@ class Island {
         return isUserWindow(win) && win.get_compositor_private() ? describe(win) : NOTHING;
     }
 
+    /**
+     * A PNG of the window the user was in before the island, for the chat:
+     * the area of its frame as it shows on screen. Written only to `path`,
+     * which must be a "window-<digits>.png" in Coucou's own inbox.
+     */
+    async captureLast(path) {
+        const inbox = GLib.build_filenamev([GLib.get_user_data_dir(), 'coucou', 'inbox']);
+        const name = GLib.path_get_basename(path);
+        if (GLib.path_get_dirname(path) !== inbox || !/^window-\d{1,20}\.png$/.test(name))
+            return NOTHING;
+        const win = this._lastFocus;
+        if (!isUserWindow(win) || !win.get_compositor_private() || win.minimized)
+            return NOTHING;
+        const rect = win.get_frame_rect();
+        let stream;
+        try {
+            stream = Gio.File.new_for_path(path).replace(null, false, Gio.FileCreateFlags.NONE, null);
+        } catch {
+            return NOTHING;
+        }
+        const shooter = new Shell.Screenshot();
+        const ok = await new Promise(resolve => {
+            try {
+                shooter.screenshot_area(rect.x, rect.y, rect.width, rect.height, stream, (obj, res) => {
+                    try {
+                        obj.screenshot_area_finish(res);
+                        resolve(true);
+                    } catch {
+                        resolve(false);
+                    }
+                });
+            } catch {
+                resolve(false);
+            }
+        });
+        try {
+            stream.close(null);
+        } catch {}
+        return ok ? describe(win) : NOTHING;
+    }
+
     /** The topmost window under a point given relative to the island. */
     windowAt(x, y) {
         if (!this._window)
@@ -522,6 +569,12 @@ export default class CoucouIslandExtension extends Extension {
 
     LastFocusedWindowAsync(_params, invocation) {
         const answer = this._ownedBy(invocation)?.lastFocused() ?? NOTHING;
+        invocation.return_value(new GLib.Variant('(bss)', answer));
+    }
+
+    async CaptureWindowAsync([path], invocation) {
+        const island = this._ownedBy(invocation);
+        const answer = island ? await island.captureLast(path) : NOTHING;
         invocation.return_value(new GLib.Variant('(bss)', answer));
     }
 

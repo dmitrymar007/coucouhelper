@@ -143,6 +143,8 @@ export const Bridge = {
   /** The mail view's Send button: through Resend, or into the user's mail app. */
   mailSend: (to: string, subject: string, body: string, file: string | null) =>
     callOrThrow<"resend" | "mailApp">("mail_send", { to, subject, body, file }),
+  /** The chat's camera: the window the user was in, as a PNG in the inbox. */
+  captureWindow: () => callOrThrow<DroppedFile>("capture_window"),
   /** Copies a dropped file into the inbox. */
   ingestFile: (path: string) => callOrThrow<DroppedFile>("ingest_file", { path }),
   /** Only ever tells you whether a key exists — never its value. */

@@ -76,7 +76,9 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
   const newBtn = h("button", { class: "bar-btn", title: "New chat" }, svg(ICONS.compose, 14));
   const historyBtn = h("button", { class: "bar-btn", title: "Earlier chats" }, svg(ICONS.clock, 14));
   const modelBtn = h("button", { class: "model-btn", title: "Model" }) as HTMLButtonElement;
-  const bar = h("div", { class: "chat-bar" }, newBtn, historyBtn, input, modelBtn, send);
+  const shotBtn = h("button", { class: "bar-btn", title: "Ask about the window you were in (screenshot)" }, svg(ICONS.camera, 14));
+  shotBtn.style.display = "none";
+  const bar = h("div", { class: "chat-bar" }, newBtn, historyBtn, shotBtn, input, modelBtn, send);
   /** Earlier conversations, shown in place of the log. */
   const history = h("div", { class: "chat-history" });
   /** The backend's models, also shown in place of the log. */
@@ -283,6 +285,37 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
   }
   history.style.display = "none";
 
+  /**
+   * The window the user was in becomes the subject of a new chat, as a
+   * screenshot — like a dropped file, so any model that sees images can look
+   * at it. Needs the GNOME extension, so the button only shows with it.
+   */
+  async function screenshot() {
+    if (sending) return;
+    try {
+      const file = await Bridge.captureWindow();
+      if (State.chatHistory.length > 0) {
+        void Bridge.chatReset();
+        State.chatHistory = [];
+      }
+      State.droppedFile = { name: file.name, path: file.path };
+      State.promptContext = { kind: "file", name: file.name, path: file.path };
+      Sound.play("attach");
+      State.notify();
+      onHeightChange();
+      input.focus();
+    } catch (err) {
+      State.noteMessage = String(err).replace(/^Error:\s*/, "");
+      State.view = "note";
+      State.notify();
+    }
+  }
+  shotBtn.addEventListener("click", () => void screenshot());
+  async function refreshShotButton() {
+    const status = await Bridge.shellExtensionStatus();
+    shotBtn.style.display = status?.active ? "" : "none";
+  }
+
   newBtn.addEventListener("click", () => newChat());
   historyBtn.addEventListener("click", () => void showHistory(!historyOpen));
   send.addEventListener("click", () => void submit());
@@ -332,6 +365,7 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
     focus() {
       input.focus();
       input.select();
+      void refreshShotButton();
     },
   };
 }

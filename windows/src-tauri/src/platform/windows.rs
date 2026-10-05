@@ -265,6 +265,10 @@ pub fn last_focused_window() -> Option<(String, String)> {
     None
 }
 
+pub fn capture_window(_path: &str) -> Option<(String, String)> {
+    None
+}
+
 pub fn window_at(_x: f64, _y: f64, done: impl FnOnce(Option<(String, String)>) + 'static) {
     done(None)
 }

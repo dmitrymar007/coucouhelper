@@ -458,6 +458,31 @@ fn ingest_file(path: String) -> Result<DroppedFile, String> {
     files::ingest(&path)
 }
 
+/// The chat's camera button: the window the user was in, as a PNG in the
+/// inbox, handed back like a dropped file. Needs the GNOME extension.
+#[tauri::command]
+async fn capture_window() -> Result<DroppedFile, String> {
+    let dir = files::inbox_dir();
+    platform::ensure_private_dir(&dir).map_err(|e| e.to_string())?;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let path = dir.join(format!("window-{stamp}.png"));
+    let path_str = path.to_string_lossy().to_string();
+    let (app, title) = tauri::async_runtime::spawn_blocking(move || platform::capture_window(&path_str))
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or("No window to capture: open the chat from the window you want to show.")?;
+    let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+    if size == 0 {
+        return Err("The screenshot came back empty.".into());
+    }
+    let what = if title.is_empty() { app } else { title };
+    let name: String = format!("{} (screenshot).png", what.replace('/', "-")).chars().take(90).collect();
+    Ok(DroppedFile { name, path: path.to_string_lossy().to_string(), size })
+}
+
 /// The island may only ask whether a key exists — never read it.
 #[tauri::command]
 fn secret_present(key: String) -> bool {
@@ -644,6 +669,7 @@ pub fn run() {
             shell_extension_remove,
             shell_hint_seen,
             ingest_file,
+            capture_window,
             mail_send,
             secret_present,
             secret_set,

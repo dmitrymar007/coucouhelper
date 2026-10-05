@@ -245,6 +245,10 @@ pub fn set_placement(screen: &str) {
 
 /// A question to the extension, answered before returning. Any thread.
 fn ask(method: &str, args: Option<glib::Variant>, reply: &str) -> Option<glib::Variant> {
+    ask_within(method, args, reply, 1500)
+}
+
+fn ask_within(method: &str, args: Option<glib::Variant>, reply: &str, timeout_ms: i32) -> Option<glib::Variant> {
     let (connection, owner) = REMOTE.lock().unwrap().clone()?;
     connection
         .call_sync(
@@ -255,7 +259,7 @@ fn ask(method: &str, args: Option<glib::Variant>, reply: &str) -> Option<glib::V
             args.as_ref(),
             Some(glib::VariantTy::new(reply).ok()?),
             gio::DBusCallFlags::NONE,
-            1500,
+            timeout_ms,
             None::<&gio::Cancellable>,
         )
         .ok()
@@ -278,6 +282,12 @@ pub fn activate_window_of(pids: &[u32], hint: &str) -> bool {
 /// The window the user was in before the island.
 pub fn last_focused_window() -> Option<(String, String)> {
     ask("LastFocusedWindow", None, "(bss)").and_then(window_answer)
+}
+
+/// A PNG of the window the user was in, written by the extension to `path`
+/// (a "window-<digits>.png" in the inbox; it refuses anything else).
+pub fn capture_window(path: &str) -> Option<(String, String)> {
+    ask_within("CaptureWindow", Some((path,).to_variant()), "(bss)", 6000).and_then(window_answer)
 }
 
 /// The window under a point relative to the island. Main thread: answers
