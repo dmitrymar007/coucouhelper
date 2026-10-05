@@ -598,6 +598,67 @@ export class BotEngine {
     this.slotH = Math.max(0, this.slotH + this.slotHVel * dt);
 
     this.lastTime = n;
+    this.heal();
+  }
+
+  // ── Self-repair ─────────────────────────────────────────────────────────────
+
+  /** Told what heal() found, so the island can log it. */
+  onAnomaly: ((what: string) => void) | null = null;
+  private eyesHiddenSince: number | null = null;
+  private eyesHiddenReported = false;
+
+  /**
+   * Last line of defence. A value that turns non-finite stays so for good —
+   * every spring feeds it back into itself — and a roll left behind without
+   * its tween keeps the eyes on the far side. Mochi then shows a blank face
+   * until the app restarts. Neither should happen; if one does, Mochi is put
+   * back together instead, and the island logs what was wrong.
+   */
+  private heal() {
+    const rest = {
+      yaw: 0, pitch: 0, roll: 0, tilt: 0, open: 1, sx: 1, sy: 1, oy: 0, ox: 0,
+      tint: 0, morph: 0, hands: 0, blush: 0, es: 1, badgeS: 0,
+      tgYaw: 0, tgPitch: 0, tgTilt: 0, tgSy: 1, tgSx: 1, tgEs: 1,
+      lookX: 0, lookY: 0, slotH: 0, slotHVel: 0,
+    } as const;
+    const found: string[] = [];
+    for (const [key, value] of Object.entries(rest) as [keyof typeof rest, number][]) {
+      if (Number.isFinite(this[key])) continue;
+      found.push(`${key}=${this[key]}`);
+      this[key] = value;
+      this.tweens.delete(key as PropKey);
+      this.locks.delete(key as PropKey);
+    }
+    if (this.roll !== 0 && !this.tweens.has("roll")) {
+      found.push(`roll=${this.roll.toFixed(2)} with no roll running`);
+      this.roll = 0;
+    }
+    if (found.length) this.onAnomaly?.(`Mochi repaired: ${found.join(", ")}`);
+  }
+
+  /**
+   * Called by drawEyes: whether any eye made it onto the face. Eyes gone for
+   * more than a second outside a roll or the mailbox are reported once, with
+   * everything that decides where they go.
+   */
+  private noteEyes(drawn: boolean) {
+    if (drawn || this.morph > 0.5 || this.tweens.has("roll")) {
+      this.eyesHiddenSince = null;
+      this.eyesHiddenReported = false;
+      return;
+    }
+    const t = now();
+    this.eyesHiddenSince ??= t;
+    if (!this.eyesHiddenReported && t - this.eyesHiddenSince > 1) {
+      this.eyesHiddenReported = true;
+      const f = (v: number) => (Number.isFinite(v) ? v.toFixed(3) : String(v));
+      this.onAnomaly?.(
+        `Mochi eyes hidden: state=${this.state} eye=${this.eyeOverride ?? this.cfg.eye} ` +
+          `yaw=${f(this.yaw)} pitch=${f(this.pitch)} roll=${f(this.roll)} es=${f(this.es)} ` +
+          `open=${f(this.open)} morph=${f(this.morph)} look=${f(this.lookX)},${f(this.lookY)}`,
+      );
+    }
   }
 
   private doMiniBehaviorLoop() {
@@ -759,12 +820,15 @@ export class BotEngine {
     x.fillStyle = ink;
     x.strokeStyle = ink;
 
+    let drawn = false;
     for (const sd of [-1, 1]) {
       const eyeYaw = sd * EYE_SP + this.yaw;
       let eyePitch = EYE_P + this.pitch + this.roll;
       eyePitch = (((eyePitch + Math.PI) % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
       const cp = Math.cos(eyePitch);
-      if (Math.cos(eyeYaw) * cp <= 0.04) continue;
+      // `!(… > 0.04)` rather than `<= 0.04`: a NaN must count as hidden.
+      if (!(Math.cos(eyeYaw) * cp > 0.04)) continue;
+      drawn = true;
 
       const ex = Math.sin(eyeYaw) * cp * rx;
       const ey = -Math.sin(eyePitch) * ry + (this.morph > 0 ? ry * 0.14 * this.morph : 0);
@@ -781,6 +845,7 @@ export class BotEngine {
       x.restore();
     }
     x.restore();
+    if (!this.isMini) this.noteEyes(drawn);
   }
 
   private drawEyeShape(

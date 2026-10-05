@@ -113,6 +113,7 @@ export class Island {
     this.wireFsm();
     this.wireInput();
     this.engine.onDizzy = () => this.handleDizzy();
+    this.engine.onAnomaly = (what) => void Bridge.log(what);
     this.greeting.onComplete = () => this.fsm.greetComplete();
     State.subscribe(() => {
       this.dirty = true;
@@ -905,8 +906,11 @@ export class Island {
     const focus = State.focusTask;
     this.engine.bodyColor = focus?.isIntegration ? hexToRGB(focus.color) : null;
     this.engine.particleOverhang = BOT_OVERHANG;
-    this.engine.lookX = this.lookX();
-    this.engine.lookY = this.lookY();
+    // A cursor position that is not a number must not reach the springs.
+    const lx = this.lookX();
+    const ly = this.lookY();
+    this.engine.lookX = Number.isFinite(lx) ? lx : 0;
+    this.engine.lookY = Number.isFinite(ly) ? ly : 0;
     if (this.engine.morph > 0.3) {
       this.engine.slotHTarget = State.fileDragOver ? 0.2 : 0;
     } else {
