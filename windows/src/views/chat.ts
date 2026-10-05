@@ -11,6 +11,68 @@ import type { ViewHost } from "./views";
 
 let nextId = 1;
 
+/** Puts text on the clipboard; the async API first, the old way if it is refused. */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const area = h("textarea", { style: "position:fixed;opacity:0" }) as HTMLTextAreaElement;
+    area.value = text;
+    document.body.append(area);
+    area.select();
+    const ok = document.execCommand("copy");
+    area.remove();
+    return ok;
+  }
+}
+
+function copyButton(text: () => string, title: string): HTMLElement {
+  const b = h("button", { class: "copy-btn", title }, svg(ICONS.copy, 11));
+  b.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    if (await copyText(text())) {
+      Sound.play("blip");
+      b.classList.add("done");
+      window.setTimeout(() => b.classList.remove("done"), 900);
+    }
+  });
+  return b;
+}
+
+/** `code` and **bold** inside a line of prose, as elements — never as HTML. */
+function inline(text: string): Node[] {
+  const out: Node[] = [];
+  const re = /`([^`\n]+)`|\*\*([^*\n]+)\*\*/g;
+  let at = 0;
+  for (let m = re.exec(text); m; m = re.exec(text)) {
+    if (m.index > at) out.push(document.createTextNode(text.slice(at, m.index)));
+    out.push(m[1] != null ? h("code", { class: "inline-code", text: m[1] }) : h("b", { text: m[2] }));
+    at = m.index + m[0].length;
+  }
+  if (at < text.length) out.push(document.createTextNode(text.slice(at)));
+  return out;
+}
+
+/**
+ * An answer, readable: fenced code as a block with its own copy button, the
+ * rest as text with inline code and bold. A fence still open while the answer
+ * streams in is code up to the end.
+ */
+function formatted(content: string): HTMLElement {
+  const box = h("div", { class: "reply" });
+  const parts = content.split(/^```[^\n]*\n?/m);
+  parts.forEach((part, i) => {
+    if (i % 2 === 1) {
+      const code = part.replace(/\n$/, "");
+      box.append(h("div", { class: "code-block" }, h("pre", { text: code }), copyButton(() => code, "Copy code")));
+    } else if (part) {
+      box.append(...inline(part));
+    }
+  });
+  return box;
+}
+
 function bubble(message: ChatMessage): HTMLElement {
   if (message.role === "user") {
     return h(
@@ -19,7 +81,12 @@ function bubble(message: ChatMessage): HTMLElement {
       h("div", { class: "bubble", text: message.content }),
     );
   }
-  return h("div", { class: "chat-row" }, h("div", { class: "reply", text: message.content }));
+  return h(
+    "div",
+    { class: "chat-row answer" },
+    formatted(message.content),
+    copyButton(() => message.content, "Copy answer"),
+  );
 }
 
 function typingDots(): HTMLElement {
