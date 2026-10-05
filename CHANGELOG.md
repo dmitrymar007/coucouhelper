@@ -2,8 +2,10 @@
 
 Coucou for Linux.
 
-## Unreleased
+## 0.2.0 — October 5, 2026
 
+- Linux only: the macOS and Windows apps are no longer part of this project (they stay in the `main` branch).
+- The .deb brings the GNOME extension with it: after installing, Settings → GNOME → Turn on extension and a new login are all it takes. An older copy in your own extensions folder is replaced by the package's.
 - GNOME extension: only a Coucou you stand behind may drive the island. A packaged install is trusted as is; any other build (a cargo build, an AppImage) makes GNOME Shell ask you once per session. Before, any program could copy a binary under the name coucou and see your pointer and windows.
 - Questions from an agent are answered on the island: Claude Code's AskUserQuestion and opencode's question tool show their options as buttons (one question after the other, several picks where allowed), or go back to the terminal. Before, Allow on such a card would have let Claude Code run the question with no answer.
 - Several sessions of one agent: a chip in its card lists them — project, state, last step — and brings the chosen session's terminal back. Each session shows the context its last answer used, and opencode sessions their cost.

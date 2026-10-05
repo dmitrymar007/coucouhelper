@@ -35,6 +35,8 @@ pub struct ShellExtensionStatus {
     /// A GNOME session: the extension means something here.
     pub applicable: bool,
     pub installed: bool,
+    /// The .deb/.rpm brought this very extension: turning it on is enough.
+    pub packaged: bool,
     /// The installed files are the ones this build carries.
     pub up_to_date: bool,
     /// In GNOME's list of extensions to start.

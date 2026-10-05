@@ -42,6 +42,7 @@ export interface WindowInfo {
 export interface ShellExtensionStatus {
   applicable: boolean;
   installed: boolean;
+  packaged: boolean;
   upToDate: boolean;
   enabled: boolean;
   userExtensionsDisabled: boolean;
@@ -196,6 +197,7 @@ export interface OpencodePluginStatus {
   /** opencode itself is installed. */
   opencode: boolean;
   installed: boolean;
+  packaged: boolean;
   upToDate: boolean;
   path: string;
 }

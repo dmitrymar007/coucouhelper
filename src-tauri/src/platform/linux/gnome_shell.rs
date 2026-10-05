@@ -333,6 +333,17 @@ fn install_dir() -> std::path::PathBuf {
     super::xdg("XDG_DATA_HOME", ".local/share").join("gnome-shell/extensions").join(UUID)
 }
 
+/// Where the .deb and .rpm put the extension. GNOME Shell runs the user's copy
+/// instead when both exist.
+const PACKAGED_DIR: &str = "/usr/share/gnome-shell/extensions/coucou@coucouhelper";
+
+/// The extension in `dir` is exactly the one this build carries.
+fn matches_bundled(dir: &std::path::Path) -> bool {
+    FILES.iter().all(|(name, bundled)| {
+        std::fs::read_to_string(dir.join(name)).is_ok_and(|on_disk| on_disk == *bundled)
+    })
+}
+
 /// org.gnome.shell, or None off GNOME (asking gio for a missing schema aborts).
 fn shell_settings() -> Option<gio::Settings> {
     let source = gio::SettingsSchemaSource::default()?;
@@ -346,15 +357,20 @@ fn enabled_list(settings: &gio::Settings) -> Vec<String> {
 
 pub fn status() -> crate::platform::ShellExtensionStatus {
     let Some(settings) = shell_settings() else { return Default::default() };
-    let dir = install_dir();
-    let installed = dir.join("metadata.json").is_file();
-    let up_to_date = installed
-        && FILES.iter().all(|(name, bundled)| {
-            std::fs::read_to_string(dir.join(name)).is_ok_and(|on_disk| on_disk == *bundled)
-        });
+    let user_dir = install_dir();
+    let packaged_dir = std::path::Path::new(PACKAGED_DIR);
+    let user_copy = user_dir.join("metadata.json").is_file();
+    let packaged_copy = packaged_dir.join("metadata.json").is_file();
+    // The copy GNOME Shell runs: the user's one wins over the package's.
+    let up_to_date = if user_copy {
+        matches_bundled(&user_dir)
+    } else {
+        packaged_copy && matches_bundled(packaged_dir)
+    };
     crate::platform::ShellExtensionStatus {
         applicable: true,
-        installed,
+        installed: user_copy || packaged_copy,
+        packaged: packaged_copy && matches_bundled(packaged_dir),
         up_to_date,
         enabled: enabled_list(&settings).iter().any(|u| u == UUID),
         user_extensions_disabled: settings.boolean("disable-user-extensions"),
@@ -363,14 +379,22 @@ pub fn status() -> crate::platform::ShellExtensionStatus {
 }
 
 /// Writes the extension where GNOME looks for it and adds it to the ones it
-/// starts. Nothing else of GNOME's is touched. Only ever called from a click
-/// in Settings.
+/// starts. When the package already brought this very extension, only turns
+/// it on, and deletes an older copy of ours in the user's folder that would
+/// run instead. Nothing else of GNOME's is touched. Only ever called from a
+/// click in Settings.
 pub fn install() -> Result<(), String> {
     let settings = shell_settings().ok_or("This is not a GNOME session.")?;
     let dir = install_dir();
-    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    for (name, contents) in FILES {
-        std::fs::write(dir.join(name), contents).map_err(|e| format!("{name}: {e}"))?;
+    if matches_bundled(std::path::Path::new(PACKAGED_DIR)) {
+        if dir.ends_with(UUID) && dir.is_dir() {
+            std::fs::remove_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        }
+    } else {
+        std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        for (name, contents) in FILES {
+            std::fs::write(dir.join(name), contents).map_err(|e| format!("{name}: {e}"))?;
+        }
     }
     let mut list = enabled_list(&settings);
     if !list.iter().any(|u| u == UUID) {
@@ -383,7 +407,8 @@ pub fn install() -> Result<(), String> {
     Ok(())
 }
 
-/// Turns the extension off (GNOME stops it at once) and deletes its folder.
+/// Turns the extension off (GNOME stops it at once) and deletes the user's
+/// copy. The package's copy stays, turned off, until the package goes.
 pub fn remove() -> Result<(), String> {
     let settings = shell_settings().ok_or("This is not a GNOME session.")?;
     let list: Vec<String> = enabled_list(&settings).into_iter().filter(|u| u != UUID).collect();

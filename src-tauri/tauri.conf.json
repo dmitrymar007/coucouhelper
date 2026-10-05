@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Coucou",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "identifier": "fr.louisraille.coucou",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -66,12 +66,20 @@
       "deb": {
         "depends": [
           "libgtk-layer-shell0 (>= 0.6)"
-        ]
+        ],
+        "files": {
+          "/usr/share/gnome-shell/extensions/coucou@coucouhelper/metadata.json": "../gnome-extension/metadata.json",
+          "/usr/share/gnome-shell/extensions/coucou@coucouhelper/extension.js": "../gnome-extension/extension.js"
+        }
       },
       "rpm": {
         "depends": [
           "gtk-layer-shell"
-        ]
+        ],
+        "files": {
+          "/usr/share/gnome-shell/extensions/coucou@coucouhelper/metadata.json": "../gnome-extension/metadata.json",
+          "/usr/share/gnome-shell/extensions/coucou@coucouhelper/extension.js": "../gnome-extension/extension.js"
+        }
       }
     }
   }

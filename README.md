@@ -78,8 +78,11 @@ a Mochi icon appears in the top bar's tray. Click it → **Settings…**
 
 ### 3. Turn on the GNOME extension
 
-In **Settings → GNOME**, click **Install extension**, then **log out and back
-in** (GNOME on Wayland loads new extensions only at login). From then on the
+The package brings the extension along. In **Settings → GNOME**, click **Turn
+on extension**, then **log out and back in** (GNOME on Wayland loads new
+extensions only at login). A Coucou built from source without the package
+offers **Install extension** instead, which copies it to your own extensions
+folder. From then on the
 island sits over the top bar, on every workspace, out of Alt+Tab and the
 overview, and Mochi's eyes follow your pointer everywhere.
 
@@ -161,6 +164,13 @@ From a terminal inside the **snap version of VS Code**, use
 strips the snap's GTK environment, which otherwise crashes the app with a
 `symbol lookup error`.
 
+### Releases
+
+`scripts/release.sh <version>` builds the .deb on this machine and publishes
+it as a GitHub release (tag `linux-v<version>`), with the matching
+`CHANGELOG.md` section as notes. Bump the version in `src-tauri/tauri.conf.json`,
+`package.json` and `Cargo.toml` and commit first.
+
 ### Layout
 
 ```
@@ -187,7 +197,7 @@ docs/AGENTS.md       the hook protocol, to give any tool its own pill
 | Log | `~/.local/share/coucou/coucou.log` (stays on your machine) |
 | Hook relay | `~/.local/share/coucou/bin/coucou-hook` |
 | Relay socket | `$XDG_RUNTIME_DIR/coucou.sock` (your user only) |
-| GNOME extension | `~/.local/share/gnome-shell/extensions/coucou@coucouhelper/` |
+| GNOME extension | `/usr/share/gnome-shell/extensions/coucou@coucouhelper/` (package) or `~/.local/share/gnome-shell/extensions/coucou@coucouhelper/` |
 | Keys | the system keyring (Secret Service) |
 
 ## Troubleshooting
@@ -205,7 +215,7 @@ docs/AGENTS.md       the hook protocol, to give any tool its own pill
 ## Uninstall
 
 1. In Settings: Claude Code → **Uninstall hooks…**, opencode → **Remove**,
-   GNOME → **Remove**.
+   GNOME → **Turn off** (or **Remove**).
 2. `sudo apt remove coucou`
 3. Optionally: `rm -rf ~/.config/coucou ~/.local/share/coucou`
 

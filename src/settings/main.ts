@@ -487,9 +487,12 @@ function gnomeSection(initial: ShellExtensionStatus): HTMLElement {
         "The Coucou GNOME extension puts it over the top bar like the Mac notch, lets Mochi's eyes follow the pointer everywhere " +
         "and folds the island when you click elsewhere.";
     }
-    installBtn.textContent = st.installed && !st.upToDate ? "Update extension" : "Install extension";
+    installBtn.textContent =
+      st.installed && !st.upToDate ? "Update extension" : st.packaged ? "Turn on extension" : "Install extension";
     installBtn.style.display = st.installed && st.upToDate && st.enabled ? "none" : "";
-    removeBtn.style.display = st.installed ? "" : "none";
+    // The package's copy can only be turned off; a copy in the user's folder goes.
+    removeBtn.textContent = st.packaged ? "Turn off" : "Remove";
+    removeBtn.style.display = st.packaged ? (st.enabled ? "" : "none") : st.installed ? "" : "none";
   }
 
   installBtn.addEventListener("click", async () => {
@@ -505,8 +508,9 @@ function gnomeSection(initial: ShellExtensionStatus): HTMLElement {
   removeBtn.addEventListener("click", async () => {
     clear(feedback);
     try {
-      draw(await Bridge.shellExtensionRemove());
-      feedback.append(h("div", { class: "notice ok", text: "Removed. GNOME stopped it; restart Coucou to go back to the window below the top bar." }));
+      const st = await Bridge.shellExtensionRemove();
+      draw(st);
+      feedback.append(h("div", { class: "notice ok", text: `${st.packaged ? "Turned off" : "Removed"}. GNOME stopped it; restart Coucou to go back to the window below the top bar.` }));
     } catch (err) {
       feedback.append(h("div", { class: "notice err", text: `Could not remove: ${String(err)}` }));
     }
@@ -522,8 +526,11 @@ function gnomeSection(initial: ShellExtensionStatus): HTMLElement {
     h("div", {
       class: "hint",
       text:
-        "Installing writes the extension to ~/.local/share/gnome-shell/extensions/coucou@coucouhelper and adds it to the " +
-        "extensions GNOME starts; nothing else of GNOME's is changed. It only acts on Coucou's own island.",
+        (initial.packaged
+          ? "The extension came with the Coucou package; turning it on adds it to the extensions GNOME starts. "
+          : "Installing writes the extension to ~/.local/share/gnome-shell/extensions/coucou@coucouhelper and adds it to the " +
+            "extensions GNOME starts. ") +
+        "Nothing else of GNOME's is changed. It only acts on Coucou's own island.",
     }),
     feedback,
   );
