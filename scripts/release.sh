@@ -45,4 +45,6 @@ body="$notes
 
 git tag "$tag"
 git push origin "$tag"
-gh release create "$tag" "$out" release/SHA256SUMS --title "Coucou for Linux $v" --notes "$body"
+# Always the repository behind origin, never the gh default (which may be upstream).
+repo=$(git remote get-url origin | sed -E 's#^(https://github.com/|git@github.com:)##; s#\.git$##')
+gh release create "$tag" "$out" release/SHA256SUMS --title "Coucou for Linux $v" --notes "$body" --repo "$repo"
