@@ -22,6 +22,8 @@ import { IslandStateMachine } from "./fsm";
 import { answerQuestion, questionToTerminal } from "./hooks";
 
 const BOT_OVERHANG = 40;
+/** Mochi's canvas, CSS px: room for the biggest Mochi (confused, 110) and a spring's overshoot. */
+const BOT_CANVAS = 128;
 /** Same margin as the Rust hit test (src-tauri/src/island.rs). */
 const HIT_MARGIN = 14;
 /**
@@ -115,6 +117,9 @@ export class Island {
     this.wireInput();
     this.engine.onDizzy = () => this.handleDizzy();
     this.engine.onAnomaly = (what) => void Bridge.log(what);
+    // A script error stops the frame loop for good: at least say so in the log.
+    window.addEventListener("error", (e) => void Bridge.log(`js error: ${e.message} at ${e.filename}:${e.lineno}`));
+    window.addEventListener("unhandledrejection", (e) => void Bridge.log(`js rejection: ${String(e.reason)}`));
     this.greeting.onComplete = () => this.fsm.greetComplete();
     State.subscribe(() => {
       this.dirty = true;
@@ -898,15 +903,24 @@ export class Island {
     const w = Math.max(1, Math.round(size));
     const hCss = w + BOT_OVERHANG;
     const dpr = Math.min(2, window.devicePixelRatio || 1);
-    if (this.canvasPx !== w) {
-      this.canvasPx = w;
-      this.botCanvas.width = Math.round(w * dpr);
-      this.botCanvas.height = Math.round(hCss * dpr);
-      this.botCanvas.style.width = `${w}px`;
-      this.botCanvas.style.height = `${hCss}px`;
+    // The canvas keeps one size and moves with a transform; Mochi is drawn at
+    // its own size in the middle. WebKitGTK does not always repaint the area a
+    // shrinking or moving canvas leaves behind: after the dizzy spin (a bigger
+    // Mochi) a frozen, eyeless copy stayed on screen behind the live one.
+    const side = Math.max(BOT_CANVAS, w);
+    const sideH = side + BOT_OVERHANG;
+    if (this.canvasPx !== side) {
+      this.canvasPx = side;
+      this.botCanvas.width = Math.round(side * dpr);
+      this.botCanvas.height = Math.round(sideH * dpr);
+      this.botCanvas.style.width = `${side}px`;
+      this.botCanvas.style.height = `${sideH}px`;
+      this.botCanvas.style.left = "0";
+      this.botCanvas.style.top = "0";
     }
-    this.botCanvas.style.left = `${this.botCx.value - w / 2}px`;
-    this.botCanvas.style.top = `${this.botCy.value - BOT_OVERHANG / 2 - hCss / 2}px`;
+    const left = this.botCx.value - side / 2;
+    const top = this.botCy.value - BOT_OVERHANG / 2 - sideH / 2;
+    this.botCanvas.style.transform = `translate(${left}px, ${top}px)`;
 
     const ctx = this.botCanvas.getContext("2d");
     if (!ctx) return;
@@ -929,8 +943,9 @@ export class Island {
       }
     }
     this.engine.update(dt);
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, w, hCss);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, this.botCanvas.width, this.botCanvas.height);
+    ctx.setTransform(dpr, 0, 0, dpr, ((side - w) / 2) * dpr, ((sideH - hCss) / 2) * dpr);
     this.engine.draw(ctx, w, hCss);
   }
 
