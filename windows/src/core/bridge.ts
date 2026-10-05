@@ -103,6 +103,9 @@ export const Bridge = {
   approvalAck: (requestId: string) => call<void>("approval_ack", { requestId }),
   /** "Nobody can act on this" — Claude Code asks in the terminal right away. */
   approvalDecline: (requestId: string) => call<void>("approval_decline", { requestId }),
+  /** The question card's answer: question text → chosen label(s). */
+  approvalAnswer: (requestId: string, answers: Record<string, string | string[]>) =>
+    call<void>("approval_answer", { requestId, answers }),
 
   // ── Chat, files, secrets ──────────────────────────────────────────────────
   /** One chat turn. The API key and any file bytes never leave Rust. */

@@ -50,7 +50,7 @@ fn main() {
     if std::env::var_os("COUCOU_CHAT").is_some() {
         std::process::exit(0);
     }
-    let Some((payload, event)) = read_event() else { std::process::exit(0) };
+    let Some((payload, event, questions)) = read_event() else { std::process::exit(0) };
 
     let waits_for_answer = event == "PermissionRequest";
     let budget = if waits_for_answer { DECISION_BUDGET } else { FIRE_AND_FORGET_BUDGET };
@@ -65,7 +65,7 @@ fn main() {
     });
 
     if let Ok(Some(decision)) = rx.recv_timeout(budget) {
-        if let Some(json) = decision_json(&decision) {
+        if let Some(json) = decision_json(&decision, questions.as_ref()) {
             let mut out = std::io::stdout();
             let _ = writeln!(out, "{json}");
             let _ = out.flush();
@@ -78,8 +78,34 @@ fn main() {
 /// The documented PermissionRequest output. Anything we do not recognise prints
 /// nothing at all rather than guessing — silence is the safe answer.
 /// See https://code.claude.com/docs/en/hooks
-fn decision_json(decision: &str) -> Option<String> {
-    let behavior = match decision.trim() {
+///
+/// For AskUserQuestion the island answers with `{"answers":{question: label}}`;
+/// the questions themselves come from the request this relay received, never
+/// from the island, and go back as `updatedInput` the way the Agent SDK
+/// answers them (https://code.claude.com/docs/en/agent-sdk/user-input).
+fn decision_json(decision: &str, questions: Option<&serde_json::Value>) -> Option<String> {
+    let decision = decision.trim();
+    if decision.starts_with('{') {
+        let questions = questions?;
+        let answers = serde_json::from_str::<serde_json::Value>(decision).ok()?.get("answers")?.clone();
+        let valid = answers.as_object().is_some_and(|map| {
+            !map.is_empty() && map.values().all(|v| v.is_string() || v.as_array().is_some_and(|a| a.iter().all(|x| x.is_string())))
+        });
+        if !valid {
+            return None;
+        }
+        let output = serde_json::json!({
+            "hookSpecificOutput": {
+                "hookEventName": "PermissionRequest",
+                "decision": {
+                    "behavior": "allow",
+                    "updatedInput": { "questions": questions, "answers": answers },
+                },
+            },
+        });
+        return Some(output.to_string());
+    }
+    let behavior = match decision {
         // "always" still answers a plain allow; remembering it is the island's
         // business, not Claude Code's.
         "allow" | "always" => r#"{"behavior":"allow"}"#.to_string(),
@@ -91,8 +117,9 @@ fn decision_json(decision: &str) -> Option<String> {
     ))
 }
 
-/// Reads stdin and returns the payload to forward plus the event name.
-fn read_event() -> Option<(String, String)> {
+/// Reads stdin and returns the payload to forward, the event name, and the
+/// questions of an AskUserQuestion request (kept whole, before truncation).
+fn read_event() -> Option<(String, String, Option<serde_json::Value>)> {
     let mut raw = Vec::new();
     if std::io::stdin().read_to_end(&mut raw).is_err() || raw.is_empty() {
         return None;
@@ -137,6 +164,10 @@ fn read_event() -> Option<(String, String)> {
         map.remove(*field);
     }
 
+    let questions = (map.get("tool_name").and_then(|v| v.as_str()) == Some("AskUserQuestion"))
+        .then(|| map.get("tool_input").and_then(|i| i.get("questions")).cloned())
+        .flatten();
+
     let cwd_missing = map
         .get("cwd")
         .and_then(|v| v.as_str())
@@ -178,7 +209,7 @@ fn read_event() -> Option<(String, String)> {
 
     let mut line = payload.to_string();
     line.push('\n');
-    Some((line, event))
+    Some((line, event, questions))
 }
 
 /// Caps every string in the payload. A single Write can carry a whole file.
@@ -239,23 +270,39 @@ mod tests {
     #[test]
     fn decision_json_matches_the_documented_shape() {
         assert_eq!(
-            decision_json("allow").unwrap(),
+            decision_json("allow", None).unwrap(),
             r#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}"#
         );
         assert_eq!(
-            decision_json("deny").unwrap(),
+            decision_json("deny", None).unwrap(),
             r#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny","message":"Denied from Coucou"}}}"#
         );
         // "always" is an island concept; Claude Code just gets an allow.
-        assert!(decision_json("always").unwrap().contains(r#""behavior":"allow""#));
+        assert!(decision_json("always", None).unwrap().contains(r#""behavior":"allow""#));
+    }
+
+    #[test]
+    fn questions_are_answered_with_the_requests_own_questions() {
+        let questions = serde_json::json!([{ "question": "Colour?", "header": "C", "options": [{ "label": "Red" }, { "label": "Blue" }], "multiSelect": false }]);
+        let out = decision_json(r#"{"answers":{"Colour?":"Blue"}}"#, Some(&questions)).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["hookSpecificOutput"]["decision"]["behavior"], "allow");
+        assert_eq!(v["hookSpecificOutput"]["decision"]["updatedInput"]["questions"], questions);
+        assert_eq!(v["hookSpecificOutput"]["decision"]["updatedInput"]["answers"]["Colour?"], "Blue");
+        // Multi-select answers are lists of labels.
+        assert!(decision_json(r#"{"answers":{"Colour?":["Red","Blue"]}}"#, Some(&questions)).is_some());
+        // No questions in the request, empty or odd answers: silence.
+        assert!(decision_json(r#"{"answers":{"Colour?":"Blue"}}"#, None).is_none());
+        assert!(decision_json(r#"{"answers":{}}"#, Some(&questions)).is_none());
+        assert!(decision_json(r#"{"answers":{"Colour?":3}}"#, Some(&questions)).is_none());
     }
 
     #[test]
     fn anything_unrecognised_prints_nothing() {
-        assert!(decision_json("").is_none());
-        assert!(decision_json("maybe").is_none());
+        assert!(decision_json("", None).is_none());
+        assert!(decision_json("maybe", None).is_none());
         // The shape the app used to send must not be mistaken for a decision.
-        assert!(decision_json(r#"{"permissionDecision":"allow"}"#).is_none());
+        assert!(decision_json(r#"{"permissionDecision":"allow"}"#, None).is_none());
     }
 
     #[test]

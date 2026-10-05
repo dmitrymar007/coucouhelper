@@ -19,6 +19,7 @@ import { USC, UploadSeq, uploadProgressCurve } from "../upload/sequence";
 import { buildHeader, buildViews, type ViewActions, type ViewHost } from "../views/views";
 import { h } from "../views/dom";
 import { IslandStateMachine } from "./fsm";
+import { answerQuestion, questionToTerminal } from "./hooks";
 
 const BOT_OVERHANG = 40;
 /** Same margin as the Rust hit test (src-tauri/src/island.rs). */
@@ -130,6 +131,9 @@ export class Island {
       setFocus: (id) => {
         State.setFocus(id);
         Sound.play("blip");
+        // A pill badged for a waiting request opens that request's card.
+        if (State.pendingApproval?.agentId === id) this.setView("approval");
+        else if (State.pendingQuestion?.agentId === id) this.setView("question");
       },
       openTerminal: () => {
         const cwd = State.focusTask?.sessionCwd ?? null;
@@ -179,6 +183,8 @@ export class Island {
         State.setPillBadge(req.agentId, null);
         this.setView(State.defaultView());
       },
+      answer: (label) => answerQuestion(this, label),
+      questionToTerminal: () => questionToTerminal(this),
       toggleSound: () => {
         State.settings.soundEnabled = !State.settings.soundEnabled;
         Sound.setEnabled(State.settings.soundEnabled);

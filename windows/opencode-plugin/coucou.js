@@ -47,9 +47,10 @@ function toolInput(args) {
 }
 
 /**
- * Hands one event to Coucou. `answer` resolves with the island's decision
- * ("allow", "deny") for a permission request, or null; `child` is the relay,
- * to drop the request when it is answered in opencode first.
+ * Hands one event to Coucou. `answer` resolves with the island's decision for
+ * a permission request or a question — `{ behavior: "allow" | "deny",
+ * answers? }` — or null; `child` is the relay, to drop the request when it is
+ * answered in opencode first.
  */
 function relay(payload, waitForAnswer = false) {
   let child;
@@ -66,8 +67,13 @@ function relay(payload, waitForAnswer = false) {
     child.on("error", () => resolve(null));
     child.on("close", () => {
       try {
-        const behavior = JSON.parse(out).hookSpecificOutput?.decision?.behavior;
-        resolve(behavior === "allow" || behavior === "deny" ? behavior : null);
+        const decision = JSON.parse(out).hookSpecificOutput?.decision;
+        const behavior = decision?.behavior;
+        resolve(
+          behavior === "allow" || behavior === "deny"
+            ? { behavior, answers: decision.updatedInput?.answers ?? null }
+            : null,
+        );
       } catch {
         resolve(null);
       }
@@ -127,7 +133,52 @@ export const Coucou = async ({ client, directory }) => {
     try {
       await client.postSessionIdPermissionsPermissionId({
         path: { id: p.sessionID, permissionID: p.id },
-        body: { response: decision === "allow" ? "once" : "reject" },
+        body: { response: decision.behavior === "allow" ? "once" : "reject" },
+      });
+    } catch {
+      // Answered meanwhile, or opencode is going away: nothing to do.
+    }
+  }
+
+  /**
+   * opencode's question tool, asked on the island the way Claude Code's
+   * AskUserQuestion is: the same request, the options as buttons. The island
+   * answers question text → label(s); opencode wants one list of labels per
+   * question, in order.
+   */
+  async function askQuestion(p) {
+    if (children.has(p.sessionID) || !Array.isArray(p.questions)) return;
+    const questions = p.questions.map((q) => ({
+      question: q.question,
+      header: q.header ?? "",
+      options: (q.options ?? []).map((o) => ({ label: o.label, description: o.description ?? "" })),
+      multiSelect: q.multiple === true,
+    }));
+    const { child, answer } = relay(
+      {
+        ...base("PermissionRequest", p.sessionID),
+        tool_name: "AskUserQuestion",
+        tool_input: { questions },
+        question_id: p.id,
+      },
+      true,
+    );
+    if (!child) return;
+    asking.set(p.id, child);
+    const decision = await answer;
+    if (!asking.delete(p.id) || !decision?.answers) return;
+    const answers = questions.map((q) => {
+      const a = decision.answers[q.question];
+      if (Array.isArray(a)) return a.map(String);
+      return typeof a === "string" ? [a] : [];
+    });
+    try {
+      // The plugin's client predates the question API; its transport does not.
+      await client._client.post({
+        url: "/question/{requestID}/reply",
+        path: { requestID: p.id },
+        body: { answers },
+        headers: { "Content-Type": "application/json" },
       });
     } catch {
       // Answered meanwhile, or opencode is going away: nothing to do.
@@ -165,6 +216,11 @@ export const Coucou = async ({ client, directory }) => {
         case "permission.asked":
           void ask(p);
           break;
+        case "question.asked":
+          void askQuestion(p);
+          break;
+        case "question.replied":
+        case "question.rejected":
         case "permission.replied": {
           const id = p.requestID ?? p.permissionID;
           const child = asking.get(id);

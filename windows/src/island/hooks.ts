@@ -5,7 +5,7 @@
 
 import { Bridge, onEvent } from "../core/bridge";
 import { Sound } from "../core/sound";
-import { State } from "../core/state";
+import { State, type AgentQuestion } from "../core/state";
 import type { Island } from "./island";
 
 const CLAUDE_ID = "integration_claude";
@@ -184,9 +184,88 @@ export function registerHookHandlers(island: Island) {
   // The relay went away while the card was up: the question was answered in
   // the terminal (or the agent quit), so the card has nothing left to decide.
   void onEvent<string>("approval-gone", (requestId) => {
-    if (State.pendingApproval?.requestId !== requestId) return;
-    clearApproval(island, State.pendingApproval.agentId);
+    if (State.pendingApproval?.requestId === requestId) clearApproval(island, State.pendingApproval.agentId);
+    if (State.pendingQuestion?.requestId === requestId) clearQuestion(island, State.pendingQuestion.agentId);
   });
+}
+
+/** Takes the question card down and hands the island back. */
+function clearQuestion(island: Island, agentId: string) {
+  if (pendingTimeout != null) window.clearTimeout(pendingTimeout);
+  pendingTimeout = null;
+  State.pendingQuestion = null;
+  State.isPinned = false;
+  island.dropPin();
+  State.updateTask(agentId, "working");
+  State.setPillBadge(agentId, null);
+  if (State.view === "question") island.setView(State.defaultView());
+  State.notify();
+}
+
+/**
+ * AskUserQuestion's `questions`, checked: 1–4 questions of 2+ options, each a
+ * label (and maybe a description). Anything else goes back to the terminal.
+ */
+function parseQuestions(raw: unknown): AgentQuestion[] | null {
+  if (!Array.isArray(raw) || raw.length === 0 || raw.length > 4) return null;
+  const out: AgentQuestion[] = [];
+  for (const q of raw) {
+    if (!q || typeof q !== "object") return null;
+    const { question, header, options, multiSelect } = q as Record<string, unknown>;
+    if (typeof question !== "string" || !question.trim() || !Array.isArray(options) || options.length < 1) return null;
+    const opts = options.slice(0, 6).map((o) => {
+      const r = (o ?? {}) as Record<string, unknown>;
+      return {
+        label: typeof r.label === "string" ? r.label : "",
+        description: typeof r.description === "string" ? r.description : "",
+      };
+    });
+    if (opts.some((o) => !o.label)) return null;
+    out.push({
+      question,
+      header: typeof header === "string" ? header : "",
+      options: opts,
+      multiSelect: multiSelect === true,
+    });
+  }
+  return out;
+}
+
+/** The question card: a label picked (or, on a several-answers question, Done). */
+export function answerQuestion(island: Island, label: string | null) {
+  const q = State.pendingQuestion;
+  if (!q) return;
+  const current = q.questions[q.index];
+  if (current.multiSelect) {
+    if (label != null) {
+      q.picked = q.picked.includes(label) ? q.picked.filter((l) => l !== label) : [...q.picked, label];
+      State.notify();
+      return;
+    }
+    if (q.picked.length === 0) return;
+    q.answers[current.question] = q.picked;
+  } else {
+    if (label == null) return;
+    q.answers[current.question] = label;
+  }
+  q.picked = [];
+  q.index += 1;
+  Sound.play("blip");
+  if (q.index < q.questions.length) {
+    State.notify();
+    return;
+  }
+  void Bridge.approvalAnswer(q.requestId, q.answers);
+  Sound.play("approve");
+  clearQuestion(island, q.agentId);
+}
+
+/** The question card's "In terminal": the agent asks there instead. */
+export function questionToTerminal(island: Island) {
+  const q = State.pendingQuestion;
+  if (!q) return;
+  void Bridge.approvalDecline(q.requestId);
+  clearQuestion(island, q.agentId);
 }
 
 /** Takes the approval card down and hands the island back. */
@@ -355,8 +434,39 @@ function handleHook(island: Island, payload: HookPayload) {
       // One card, one request. A second one must never quietly replace the first
       // — that would leave a human staring at request B while request A waits for
       // a decision nobody can give. Hand it straight back to the terminal.
-      if (State.pendingApproval && State.pendingApproval.requestId !== requestId) {
+      const busy =
+        (State.pendingApproval && State.pendingApproval.requestId !== requestId) ||
+        (State.pendingQuestion && State.pendingQuestion.requestId !== requestId);
+      if (busy) {
         if (requestId) void Bridge.approvalDecline(requestId);
+        break;
+      }
+
+      // A question (Claude Code's AskUserQuestion, opencode's question tool):
+      // its options become buttons, and the answer goes back through the relay.
+      if (payload.tool_name === "AskUserQuestion") {
+        const questions = parseQuestions(payload.tool_input?.questions);
+        if (!questions || !requestId) {
+          if (requestId) void Bridge.approvalDecline(requestId);
+          break;
+        }
+        ensurePill();
+        if (pendingTimeout != null) window.clearTimeout(pendingTimeout);
+        State.pendingQuestion = { requestId, agentId, questions, index: 0, answers: {}, picked: [] };
+        void Bridge.approvalAck(requestId);
+        State.updateTask(agentId, "question");
+        State.isPinned = true;
+        Sound.play("question");
+        if (focused) {
+          island.alert("question");
+        } else {
+          State.setPillBadge(agentId, "approval");
+          island.reveal();
+        }
+        pendingTimeout = window.setTimeout(() => {
+          pendingTimeout = null;
+          if (State.pendingQuestion) clearQuestion(island, State.pendingQuestion.agentId);
+        }, 110_000);
         break;
       }
       ensurePill();

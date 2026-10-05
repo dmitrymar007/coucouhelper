@@ -267,6 +267,12 @@ fn approval_decision(app: AppHandle, request_id: String, decision: String) {
 /// The island has the card on screen, so the long wait for a human may begin.
 /// Until this arrives the relay only waits a few hundred milliseconds, which is
 /// what stops a paused or unresponsive island from freezing Claude Code.
+/// The question card's answer: question text → chosen label(s).
+#[tauri::command]
+fn approval_answer(app: AppHandle, request_id: String, answers: serde_json::Value) {
+    pipe::answer_question(&app, &request_id, &answers);
+}
+
 #[tauri::command]
 fn approval_ack(app: AppHandle, request_id: String) {
     pipe::acknowledge(&app, &request_id);
@@ -610,6 +616,7 @@ pub fn run() {
             hooks_preview,
             hooks_apply,
             approval_decision,
+            approval_answer,
             approval_ack,
             approval_decline,
             log_line,

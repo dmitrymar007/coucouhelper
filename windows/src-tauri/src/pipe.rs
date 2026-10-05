@@ -306,6 +306,25 @@ pub fn decline(app: &AppHandle, request_id: &str) {
     send(app, request_id, Reply::Decline, false);
 }
 
+/// The island's answer to a question (AskUserQuestion, opencode's question
+/// tool): question text → chosen label, or labels when several may be chosen.
+/// The relay pairs it with the questions it was asked; anything else is
+/// dropped here rather than passed on.
+pub fn answer_question(app: &AppHandle, request_id: &str, answers: &Value) {
+    let valid = answers.as_object().is_some_and(|map| {
+        !map.is_empty()
+            && map.iter().all(|(k, v)| {
+                !k.is_empty() && (v.is_string() || v.as_array().is_some_and(|a| a.iter().all(Value::is_string)))
+            })
+    });
+    if !valid {
+        log::line(format!("answer id={request_id} rejected: not question → label"));
+        return;
+    }
+    log::line(format!("answer id={request_id}"));
+    send(app, request_id, Reply::Decision(json!({ "answers": answers }).to_string()), false);
+}
+
 /// Called by the island's Allow / Deny buttons. Only ever a bare word: turning
 /// it into Claude Code's JSON is coucou-hook's job.
 pub fn answer(app: &AppHandle, request_id: &str, decision: &str) {

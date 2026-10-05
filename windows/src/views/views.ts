@@ -24,6 +24,10 @@ export interface ViewActions {
   openTarget(): void;
   openUrl(url: string): void;
   decide(d: "allow" | "deny"): void;
+  /** The question card: a label picked, or Done (null) on a several-answers question. */
+  answer(label: string | null): void;
+  /** The question card's "In terminal". */
+  questionToTerminal(): void;
   toggleSound(): void;
   setVolume(v: number): void;
   setAutoClose(seconds: number): void;
@@ -335,20 +339,48 @@ function buildApproval(actions: ViewActions): ViewHost {
 
 // ── Question ──────────────────────────────────────────────────────────────────
 
-function buildQuestion(): ViewHost {
+function buildQuestion(actions: ViewActions): ViewHost {
   const who = h("div");
-  const title = h("div", { class: "title" });
-  const row = h("div", { class: "actions" });
-  const el = h("div", { class: "view" }, card("cyan", stack(116, 16, who, title, row)));
+  const head = h("div", { class: "sub" });
+  const title = h("div", { class: "title q-title" });
+  const row = h("div", { class: "actions q-options" });
+  const el = h("div", { class: "view" }, card("cyan", stack(116, 16, who, head, title, row)));
+  let rowKey = "";
   return {
     el,
     sync() {
+      const q = State.pendingQuestion;
       clear(who);
-      who.append(agentWho(State.focusTask, "Claude Code is asking a question"));
-      const task = State.focusTask;
-      title.textContent = task?.steps.at(-1) ?? "Claude needs an answer.";
+      who.append(agentWho(State.focusTask, "is asking"));
+      if (!q) {
+        // A question noticed in a notification only: it is answered there.
+        head.textContent = "";
+        title.textContent = State.focusTask?.steps.at(-1) ?? "The agent needs an answer.";
+        if (rowKey !== "none") {
+          rowKey = "none";
+          clear(row);
+          row.append(h("div", { class: "sub", text: "Answer in your terminal." }));
+        }
+        return;
+      }
+      const current = q.questions[q.index];
+      const count = q.questions.length > 1 ? ` · ${q.index + 1}/${q.questions.length}` : "";
+      head.textContent = `${current.header || "Question"}${count}${current.multiSelect ? " · pick any" : ""}`;
+      title.textContent = current.question;
+      // Rebuilt only when what it shows changes: rebuilding between a mouse
+      // down and up would swallow the click.
+      const key = `${q.requestId}:${q.index}:${q.picked.join("|")}`;
+      if (key === rowKey) return;
+      rowKey = key;
       clear(row);
-      row.append(h("div", { class: "sub", text: "Answer in your terminal — Coucou can't reply for you yet." }));
+      for (const o of current.options) {
+        const on = q.picked.includes(o.label);
+        const b = btn(o.label.slice(0, 32), current.multiSelect && !on ? "secondary" : "primary", () => actions.answer(o.label));
+        if (o.description) b.title = o.description;
+        row.append(b);
+      }
+      if (current.multiSelect) row.append(btn("Done", "secondary", () => actions.answer(null)));
+      row.append(btn("In terminal", "secondary", () => actions.questionToTerminal()));
     },
   };
 }
@@ -511,7 +543,7 @@ export function buildViews(
   map.set("overview", buildOverview(actions));
   map.set("empty", buildEmpty(actions));
   map.set("approval", buildApproval(actions));
-  map.set("question", buildQuestion());
+  map.set("question", buildQuestion(actions));
   map.set("error", buildError(actions));
   map.set("finished", buildFinished(actions));
   map.set("confused", buildConfused());

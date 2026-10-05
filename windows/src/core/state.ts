@@ -32,6 +32,26 @@ export interface ApprovalInfo {
   command: string;
 }
 
+/** One question an agent asks (AskUserQuestion, opencode's question tool). */
+export interface AgentQuestion {
+  question: string;
+  header: string;
+  options: { label: string; description: string }[];
+  multiSelect: boolean;
+}
+
+/** Questions waiting on the island, answered one after the other. */
+export interface QuestionInfo {
+  requestId: string;
+  agentId: string;
+  questions: AgentQuestion[];
+  /** The question on screen. */
+  index: number;
+  answers: Record<string, string | string[]>;
+  /** Labels ticked so far on a question that takes several. */
+  picked: string[];
+}
+
 export interface ChatMessage {
   id: number;
   role: "user" | "assistant";
@@ -156,6 +176,7 @@ class AppState {
   searchResult: SearchResult | null = null;
   chatHistory: ChatMessage[] = [];
   pendingApproval: ApprovalInfo | null = null;
+  pendingQuestion: QuestionInfo | null = null;
 
   integrations: Record<string, IntegrationInfo> = {};
 
