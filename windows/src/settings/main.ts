@@ -211,26 +211,65 @@ function chatSection(): HTMLElement {
     void save();
   });
 
-  // opencode's models come from `opencode models`, once, when first shown.
+  // opencode's models come from `opencode models`, read again whenever the
+  // window comes back: models added to opencode meanwhile show up without
+  // restarting Coucou. Grouped by provider, the user's own first; OpenCode
+  // Zen last, since its free models refuse to answer outside opencode itself.
   const ocModel = h("select", {}) as HTMLSelectElement;
-  ocModel.append(h("option", { value: "", text: "opencode's default" }));
-  if (settings.opencodeModel) {
-    ocModel.append(h("option", { value: settings.opencodeModel, text: settings.opencodeModel }));
-  }
-  ocModel.value = settings.opencodeModel;
+  const ocRefresh = h("button", { text: "↻", title: "Read opencode's models again" }) as HTMLButtonElement;
   ocModel.addEventListener("change", () => {
     settings.opencodeModel = ocModel.value;
     void save();
   });
-  let ocModelsLoaded = false;
-  async function loadOpencodeModels() {
-    if (ocModelsLoaded) return;
-    ocModelsLoaded = true;
-    const models = (await Bridge.chatOpencodeModels()) ?? [];
+
+  function fillOpencodeModels(models: string[]) {
+    const current = settings.opencodeModel;
+    clear(ocModel);
+    ocModel.append(h("option", { value: "", text: "opencode's default" }));
+    const byProvider = new Map<string, string[]>();
     for (const id of models) {
-      if (id !== settings.opencodeModel) ocModel.append(h("option", { value: id, text: id }));
+      const slash = id.indexOf("/");
+      if (slash <= 0) continue;
+      const provider = id.slice(0, slash);
+      byProvider.set(provider, [...(byProvider.get(provider) ?? []), id]);
+    }
+    const providers = [...byProvider.keys()].sort((a, b) =>
+      a === "opencode" ? 1 : b === "opencode" ? -1 : a.localeCompare(b),
+    );
+    for (const provider of providers) {
+      const group = document.createElement("optgroup");
+      group.label = provider === "opencode" ? "OpenCode Zen" : provider;
+      for (const id of byProvider.get(provider)!.sort()) {
+        group.append(h("option", { value: id, text: id.slice(provider.length + 1) }));
+      }
+      ocModel.append(group);
+    }
+    if (current && !models.includes(current)) {
+      ocModel.append(h("option", { value: current, text: `${current} (not in opencode any more)` }));
+    }
+    ocModel.value = current;
+  }
+  fillOpencodeModels(settings.opencodeModel ? [settings.opencodeModel] : []);
+
+  let ocLoading = false;
+  async function loadOpencodeModels() {
+    if (ocLoading) return;
+    ocLoading = true;
+    ocRefresh.disabled = true;
+    try {
+      const models = await Bridge.chatOpencodeModels();
+      if (models && models.length) fillOpencodeModels(models);
+    } finally {
+      ocLoading = false;
+      ocRefresh.disabled = false;
     }
   }
+  ocRefresh.addEventListener("click", () => void loadOpencodeModels());
+  const reloadIfOpencode = () => {
+    if (backend.value === "opencode" && document.visibilityState === "visible") void loadOpencodeModels();
+  };
+  window.addEventListener("focus", reloadIfOpencode);
+  document.addEventListener("visibilitychange", reloadIfOpencode);
 
   const idle = h("select", {}) as HTMLSelectElement;
   for (const [min, label] of IDLE_CHOICES) idle.append(h("option", { value: String(min), text: label }));
@@ -258,7 +297,7 @@ function chatSection(): HTMLElement {
     }),
   ];
   const opencodeRows = [
-    h("div", { class: "row" }, h("label", { text: "Model" }), ocModel),
+    h("div", { class: "row" }, h("label", { text: "Model" }), ocModel, ocRefresh),
     h("div", {
       class: "hint",
       text:
