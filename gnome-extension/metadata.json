@@ -1,0 +1,8 @@
+{
+  "uuid": "coucou@coucouhelper",
+  "name": "Coucou island",
+  "description": "Lets the Coucou app put its island at the top centre of the screen, over the top bar and every window, the way the Mac notch does — and tells it where the pointer is. Does nothing without the Coucou app running.",
+  "shell-version": ["46", "47", "48", "49", "50", "51"],
+  "url": "https://github.com/dmitrymar007/coucouhelper",
+  "version": 1
+}

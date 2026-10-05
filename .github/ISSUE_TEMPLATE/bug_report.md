@@ -10,8 +10,8 @@ labels: bug
 
 **How to reproduce**
 
-**macOS version**
+**Distribution and version** (e.g. Ubuntu 24.04)
 
-**Mac model**
+**Desktop and session** (e.g. GNOME 46, Wayland; is the Coucou island extension on?)
 
 **Coucou version**

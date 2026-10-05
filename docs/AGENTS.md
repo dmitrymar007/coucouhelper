@@ -1,6 +1,6 @@
 # Coucou — third-party agent integration
 
-Any tool that can write to a Unix domain socket (macOS, Linux) or a named pipe (Windows) can send events to Coucou and have its own pill next to Claude Code.
+Any tool that can write to a Unix domain socket can send events to Coucou and have its own pill next to Claude Code.
 
 ## The `coucou_agent` field
 
@@ -8,39 +8,9 @@ Add the optional field `coucou_agent` to any hook JSON payload. Coucou will crea
 
 **Validation:** the name must match `^[a-z0-9-]{1,24}$` (lowercase letters, digits and hyphens, 1–24 characters). An absent or invalid name routes the event to the Claude Code pill instead.
 
-## Hook command (macOS)
+## Hook command
 
-Configure your tool to call the Coucou relay with `--agent <your-name>` after the hook executable:
-
-```json
-{
-  "hooks": {
-    "UserPromptSubmit": [
-      { "type": "command", "command": "/path/to/nb-hook --agent my-tool" }
-    ]
-  }
-}
-```
-
-The shell wrapper passes `"$@"` to the Python relay, which extracts the agent name and injects it into the payload before forwarding to Coucou.
-
-## Hook command (Windows)
-
-Same pattern with the Windows relay:
-
-```json
-{
-  "hooks": {
-    "UserPromptSubmit": [
-      { "type": "command", "command": "C:\\path\\to\\coucou-hook.exe --agent my-tool" }
-    ]
-  }
-}
-```
-
-## Hook command (Linux)
-
-Same pattern with the Linux relay. Coucou copies the relay to `~/.local/share/coucou/bin/coucou-hook` at startup.
+Configure your tool to call the Coucou relay with `--agent <your-name>`. Coucou copies the relay to `~/.local/share/coucou/bin/coucou-hook` at startup.
 
 ```json
 {
@@ -65,19 +35,22 @@ The relay adds `coucou_agent` to the JSON it forwards. You can also add it yours
 }
 ```
 
-Send newline-terminated JSON to the socket:
-- **macOS (GitHub build):** `~/Library/Application Support/NotchBuddy/nb.sock`
-- **macOS (App Store build):** `~/Library/Containers/fr.louisraille.Coucou/Data/nb.sock`
-- **Windows:** `\\.\pipe\coucou-<user-SID>`
-- **Linux:** `$XDG_RUNTIME_DIR/coucou.sock` (usually `/run/user/<uid>/coucou.sock`). Only your own user account can connect.
+Send newline-terminated JSON to the socket `$XDG_RUNTIME_DIR/coucou.sock` (usually `/run/user/<uid>/coucou.sock`). Only your own user account can connect.
 
 ## Supported events
 
 All standard Claude Code hook events are supported, **except `PermissionRequest`**:
-approval cards are not yet implemented for third-party agents (only Claude Code gets
-one). A `PermissionRequest` from an external agent is answered immediately with no
+approval cards are not yet implemented for most third-party agents. A
+`PermissionRequest` from an external agent is answered immediately with no
 decision, so the relay writes nothing and the agent re-asks in its terminal.
-Approval support for other agents will be added with Codex support.
+
+**Exception: opencode.** The Coucou plugin for opencode
+(`opencode-plugin/coucou.js`, installed from Settings → opencode) sends
+opencode's `permission.asked` as a `PermissionRequest` with `--agent opencode`,
+turns the relay's answer into opencode's own reply (`once` or `reject`), and
+kills the relay when the question is answered in opencode first. On the app
+side, a relay that closes its connection while a card is up takes the card
+down (`approval-gone`), for Claude Code too.
 
 The pill lifecycle:
 
@@ -93,72 +66,23 @@ The pill lifecycle:
 | `SessionEnd` | Active declared pills (catalog + checked in Settings) reset to idle — all others are removed |
 | `SubagentStart` / `SubagentStop` | Step added to ticker |
 
-## Declared pills
-
-A **declared pill** is a catalog entry (`PillCatalog.swift`) that has been enabled in **Settings → Active pills**. When a session ends for a declared pill, the pill stays visible and resets to idle instead of disappearing.
-
-A catalog pill that is not checked in Settings behaves like any other agent: it gets an automatic pill when a session starts, and that pill is removed when the session ends.
-
-The GitHub build exposes Gemini CLI (`agent_gemini`) and Antigravity (`agent_antigravity`) in Settings → Active pills. Cursor (`agent_cursor`) and Codex (`agent_codex`, GitHub build only) are there too — their pills can be declared and set as the main pill; session support is coming in a future version.
-
 ## Real-world examples
 
-### Gemini CLI (macOS)
+### opencode
 
-Coucou supports Gemini CLI out of the box via **Settings → Gemini CLI → Install hooks**.
-The installer writes to `~/.gemini/settings.json` and uses `--agent gemini` so
-Gemini sessions get their own pill. The relay translates Gemini event names to canonical
-Coucou events automatically.
-
-| Gemini CLI event | Canonical event |
-|---|---|
-| `BeforeTool` | `PreToolUse` |
-| `AfterTool` | `PostToolUse` |
-| `BeforeAgent` | `UserPromptSubmit` |
-| `AfterAgent` | `Stop` |
-
-`AfterModel` is not installed — it fires on every response chunk and would flood the island.
-
-### Antigravity — `agy` (macOS)
-
-Coucou supports Antigravity out of the box via **Settings → Antigravity → Install hooks**.
-The installer writes to `~/.gemini/config/hooks.json` (timeouts in seconds) and uses
-`--agent antigravity`. The relay translates `toolCall.name` / `conversationId` to the
-island's `tool_name` / `session_id`.
-
-| Antigravity event | Canonical event |
-|---|---|
-| `PreInvocation` | `UserPromptSubmit` |
-| `PreToolUse` | `PreToolUse` |
-| `PostToolUse` | `PostToolUse` |
-| `PostInvocation` | `PostToolUse` |
-| `Stop` | `Stop` |
+Settings → opencode → Install plugin writes `~/.config/opencode/plugin/coucou.js`, which relays opencode's events with `--agent opencode` (see the exception above).
 
 ### Any other tool
 
-Follow the generic pattern: call `nb-hook --agent <your-name> <EventName>` (macOS),
-`coucou-hook.exe --agent <your-name> <EventName>` (Windows)
-or `~/.local/share/coucou/bin/coucou-hook --agent <your-name> <EventName>` (Linux)
-and let the relay forward the event.
+Follow the generic pattern: call `~/.local/share/coucou/bin/coucou-hook --agent <your-name> <EventName>` and let the relay forward the event.
 
-## Quick test (Linux)
+## Quick test
 
 With Coucou running:
 
 ```sh
 echo '{"hook_event_name":"UserPromptSubmit","session_id":"t1","prompt":"hello","coucou_agent":"demo"}' \
   | ~/.local/share/coucou/bin/coucou-hook --agent demo
-```
-
-A "demo" pill should appear in the island.
-
-## Quick test (macOS)
-
-With Coucou running:
-
-```sh
-echo '{"hook_event_name":"UserPromptSubmit","session_id":"t1","prompt":"hello","coucou_agent":"demo"}' \
-  | /bin/sh ~/Library/Application\ Support/NotchBuddy/nb-hook --agent demo
 ```
 
 A "demo" pill should appear in the island.

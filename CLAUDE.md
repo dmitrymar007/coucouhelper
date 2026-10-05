@@ -1,30 +1,35 @@
-# Coucou — guide for AI coding agents
+# Coucou for Linux — guide for AI coding agents
 
-Coucou is a native macOS app (`NotchBuddy/`); `windows/` is the Tauri version for Windows and Linux. Mochi, a small animated character living in the MacBook notch, shows AI coding agent sessions (Claude Code, Gemini CLI, Antigravity and more) and a few integrations, and lets the user approve, answer, chat and drop files from the notch.
+Coucou puts Mochi, a small animated character, at the top centre of the screen. It shows AI coding agent sessions (Claude Code, opencode) and a few service integrations, and lets the user approve, answer, chat and drop files from the island. This branch is **Linux only** (Ubuntu GNOME first); the macOS and Windows apps live in the `main` branch and in the original project, [Louis-CFM/coucou](https://github.com/Louis-CFM/coucou).
 
 ## Where things are
-- `NotchBuddy/Sources/App/` — all Swift code. `NotchBuddy/Resources/sounds/` — the 28 WAV sounds. `NotchBuddy/project.yml` — XcodeGen project (never edit the `.xcodeproj` by hand).
-- `NotchBuddy/Sources/App/PillCatalog.swift` — single source of truth for all declared pills (workspace tools, agents, AI providers, services). Every pill ID, color, category and subtitle lives here.
-- `docs/SPEC.md`, `docs/INTEGRATIONS.md` — behaviour, views, states, integrations (in French).
-- `design/prototype/notch-buddy.html` — original prototype, the visual source of truth. `design/captures/` — target screenshots.
-- `windows/` — the Tauri app for Windows and Linux: Rust in `src-tauri/`, TypeScript in `src/`, the `coucou-hook` relay in `hook/`. `windows/README.md` lists what differs from the Mac.
-- `docs/*.html` — the GitHub Pages site (privacy, terms, support, legal notice).
+- `src-tauri/` — the Rust backend (Tauri 2): island window, relay socket, chat backends, pollers, Secret Service. Everything desktop-specific is in `src-tauri/src/platform/linux.rs` and `platform/linux/` (`gnome_shell.rs` = the app's end of the GNOME extension, `mail_app.rs`).
+- `src/` — the island and Settings front end (TypeScript, no framework). Mochi is drawn in Canvas 2D (`src/mochi/`).
+- `hook/` — `coucou-hook`, the relay Claude Code and opencode run on every event.
+- `gnome-extension/` — the GNOME Shell extension (`coucou@coucouhelper`) that puts the island over the top bar. The app embeds these files (`include_str!`) and installs them from Settings → GNOME.
+- `opencode-plugin/coucou.js` — the opencode plugin, also embedded and installed from Settings.
+- `sounds/` — the 28 WAVs, served/copied by `vite.config.ts`.
+- `docs/AGENTS.md` — the hook protocol and the `coucou_agent` field.
 
-## Build
+Many source comments say "port of Foo.swift": the Swift originals are in the `main` branch (`NotchBuddy/Sources/App/`) and remain the behaviour reference.
+
+## Build and test
 ```
-cd NotchBuddy && xcodegen && xcodebuild -scheme NotchBuddy -configuration Debug build
+npm install
+npm run tauri dev                                   # dev build (scripts/linux-dev.sh from a VS Code snap terminal)
+npm run build                                       # tsc type-check + vite build (+ the coucou-hook relay)
+cargo build --release -p coucou-hook && cargo test --workspace
+npm run pack                                        # AppImage, .deb, .rpm into release/
 ```
-Windows and Linux: `cd windows && npm install && npm run tauri dev`
+CI: `.github/workflows/linux.yml` (tests, packages; publishes a release on a `linux-v*` tag when `PUBLISH` is on). The version lives in `src-tauri/tauri.conf.json`, `package.json` and `Cargo.toml`, and all three must match the tag.
 
 ## Rules
-- Swift 6, SwiftUI + AppKit. No third-party dependencies unless truly unavoidable. The character is drawn in code (`Canvas` + `TimelineView`), no Rive/Lottie/images.
-- Secrets live in the Keychain, never on disk or in git.
+- Secrets live in the Secret Service (keyring), never on disk or in git.
 - No telemetry. Network calls only to services the user configured.
 - Never block Claude Code: if the app doesn't answer, the hook exits immediately.
 - Never overwrite `~/.claude/settings.json`: dated backup, merge, show the diff, write only after the user confirms.
-- Never send an email or approve a Claude Code or Codex permission without an explicit click.
-- Performance: 0 % CPU when the island is hidden.
-- Keep the bundle identifier `fr.louisraille.NotchBuddy` (Keychain items, preferences and permissions depend on it).
-- Never restyle what already ships (pills, cards, Settings, chat…): existing views stay exactly as they are in `main`, which is the App Store build. Change the look of an existing view only when explicitly asked.
-- Pill IDs are stable contract values (Keychain, UserDefaults, hook routing): never rename an existing pill ID.
-- New views follow the existing app style. `design/prototype/notch-buddy.html` and `design/captures/` are references for new work, not a reason to change existing views.
+- Never send an email or approve a Claude Code or opencode permission without an explicit click.
+- The GNOME extension only serves a Coucou the user stands behind (root-owned `/usr/bin/coucou`, or a build the user allowed in the Shell dialog). Don't weaken that check.
+- Keep the identifier `fr.louisraille.coucou` (keyring entries and settings depend on it). Pill IDs are stable contract values: never rename one.
+- Don't restyle existing views unless asked; new views follow the existing style.
+- No third-party dependencies unless truly unavoidable. The character is drawn in code, no images.

@@ -1,146 +1,48 @@
-#!/usr/bin/env bash
-# Builds, notarizes and publishes Coucou for macOS (GitHub build).
+#!/bin/bash
+# Builds the .deb on this machine and publishes it as a GitHub release.
 #
-#   ./scripts/release.sh 0.1.2            build, sign, notarize, staple, tag, publish
-#   ./scripts/release.sh 0.1.2 --finish   finish after an interrupted notarization wait
+#   scripts/release.sh 0.2.0
 #
-# Run it from a clean checkout of main. CFBundleShortVersionString in
-# NotchBuddy/project.yml must match the version, and CHANGELOG.md needs a
-# "## <version>" section: it becomes the release notes.
+# Checks first: a clean tree, the same version in tauri.conf.json, package.json
+# and Cargo.toml, a "## <version>" section in CHANGELOG.md (it becomes the
+# release notes) and no linux-v<version> tag yet. Needs `gh` signed in with
+# the right to push to this repository.
 set -euo pipefail
+cd "$(dirname "$0")/.."
 
-VERSION="${1:?Usage: $0 <version> [--finish]}"
-MODE="${2:-}"
-REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BUILD_DIR="/tmp/coucou-release-$VERSION"
-APP="$BUILD_DIR/Coucou.app"
-ZIP="$BUILD_DIR/Coucou.zip"
-COMMIT_FILE="$BUILD_DIR/commit"
-TAG="v$VERSION"
+v="${1:-}"
+if [ -z "$v" ]; then echo "usage: scripts/release.sh <version>"; exit 1; fi
+tag="linux-v$v"
 
-die() { echo "error: $*" >&2; exit 1; }
-
-case "$MODE" in
-  ""|--finish) ;;
-  *) die "unknown option '$MODE' (the only option is --finish)" ;;
-esac
-
-cd "$REPO_ROOT"
-
-# ── Checks shared by both modes ───────────────────────────────────────────────
-command -v gh >/dev/null || die "gh is not installed (brew install gh)"
-
-# The "## <version>" section of CHANGELOG.md, without leading or trailing blank lines.
-CHANGES=$(awk -v head="## $VERSION" '
-  index($0, head " ") == 1 || $0 == head { found = 1; next }
-  found && /^## / { exit }
-  found {
-    if ($0 ~ /^[ \t\r]*$/) { if (started) blanks++; next }
-    while (blanks > 0) { print ""; blanks-- }
-    print; started = 1
-  }
-' CHANGELOG.md)
-[ -n "$CHANGES" ] || die "CHANGELOG.md has no '## $VERSION' section"
-
-if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
-  die "tag $TAG already exists here"
+if [ -n "$(git status --porcelain)" ]; then echo "The working tree has uncommitted changes."; exit 1; fi
+conf=$(node -p "require('./src-tauri/tauri.conf.json').version")
+pkg=$(node -p "require('./package.json').version")
+cargo=$(sed -nE 's/^version\s*=\s*"(.+)"/\1/p' Cargo.toml | head -1)
+if [ "$conf $pkg $cargo" != "$v $v $v" ]; then
+  echo "Version mismatch: tauri.conf.json $conf, package.json $pkg, Cargo.toml $cargo (wanted $v)."; exit 1
 fi
-if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
-  die "tag $TAG already exists on GitHub"
-fi
+notes=$(awk -v h="## $v" 'index($0, h) == 1 { on = 1; next } on && /^## / { exit } on' CHANGELOG.md)
+if [ -z "$(echo "$notes" | tr -d '[:space:]')" ]; then echo "No \"## $v\" section in CHANGELOG.md."; exit 1; fi
+if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then echo "Tag $tag already exists."; exit 1; fi
 
-if [ "$MODE" != "--finish" ]; then
-  # The release must match a commit: no uncommitted changes to tracked files.
-  if ! git diff --quiet || ! git diff --cached --quiet; then
-    die "commit or stash your changes first, the release has to match a commit"
-  fi
-  COMMIT=$(git rev-parse HEAD)
+# linux-dev.sh drops the snap environment a VS Code terminal hands down.
+scripts/linux-dev.sh npm run tauri build -- --bundles deb
 
-  # ── 1. Developer ID identity ────────────────────────────────────────────────
-  # "|| true": with pipefail, grep finding nothing would end the script silently.
-  IDENTITY=$(security find-identity -v -p codesigning | grep "Developer ID Application" | head -1 | sed 's/.*"\(Developer ID Application[^"]*\)".*/\1/' || true)
-  [ -n "$IDENTITY" ] || die "no 'Developer ID Application' certificate found. Install it via Xcode → Settings → Accounts."
-  echo "Signing with: $IDENTITY"
+deb=$(ls -t target/release/bundle/deb/*_"$v"_*.deb | head -1)
+mkdir -p release
+out="release/Coucou-Linux-$v-amd64.deb"
+cp "$deb" "$out"
+(cd release && sha256sum "$(basename "$out")" > SHA256SUMS)
 
-  # ── 2. xcodegen + Release build ─────────────────────────────────────────────
-  cd "$REPO_ROOT/NotchBuddy"
-  xcodegen generate
-  PLIST_VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" Resources/Info.plist)
-  [ "$PLIST_VERSION" = "$VERSION" ] || die "the app is version $PLIST_VERSION, not $VERSION: update CFBundleShortVersionString in NotchBuddy/project.yml"
-
-  rm -rf "$BUILD_DIR" && mkdir -p "$BUILD_DIR"
-  echo "$COMMIT" > "$COMMIT_FILE"
-
-  xcodebuild \
-    -project NotchBuddy.xcodeproj \
-    -scheme NotchBuddy \
-    -configuration Release \
-    build \
-    CODE_SIGN_IDENTITY="$IDENTITY" \
-    CODE_SIGNING_REQUIRED=YES \
-    CODE_SIGNING_ALLOWED=YES \
-    CONFIGURATION_BUILD_DIR="$BUILD_DIR"
-
-  # ── 3. Zip + notarize ───────────────────────────────────────────────────────
-  ditto -c -k --keepParent "$APP" "$ZIP"
-  echo
-  echo "Sending to Apple for notarization. If you stop the wait (Ctrl+C), Apple keeps going:"
-  echo "  check it with  xcrun notarytool history --keychain-profile coucou-notary"
-  echo "  once Accepted  ./scripts/release.sh $VERSION --finish"
-  echo
-  xcrun notarytool submit "$ZIP" --keychain-profile coucou-notary --wait \
-    || die "notarization failed: see xcrun notarytool log <id> --keychain-profile coucou-notary (the id is printed above)"
-  cd "$REPO_ROOT"
-else
-  [ -d "$APP" ] && [ -f "$COMMIT_FILE" ] || die "nothing to finish in $BUILD_DIR, run ./scripts/release.sh $VERSION first"
-  COMMIT=$(cat "$COMMIT_FILE")
-fi
-
-# ── 4. Staple + verify ────────────────────────────────────────────────────────
-xcrun stapler staple "$APP" \
-  || die "stapling failed: Apple has not accepted the build yet. Check xcrun notarytool history --keychain-profile coucou-notary, then run ./scripts/release.sh $VERSION --finish"
-spctl -a -vv "$APP"
-
-# ── 5. Re-zip (with the stapled app) ──────────────────────────────────────────
-rm -f "$ZIP"
-ditto -c -k --keepParent "$APP" "$ZIP"
-echo "Release zip ready: $ZIP"
-
-# ── 6. Tag the built commit + GitHub release ──────────────────────────────────
-NOTES="Coucou $VERSION for macOS 15 or later (Apple silicon and Intel).
-
-Signed with a Developer ID and notarized by Apple.
-
-## What's new
-
-$CHANGES
+body="$notes
 
 ## Install
 
-1. Download Coucou.zip below and unzip it.
-2. Move Coucou.app to your Applications folder, replacing the old one if you have it.
-3. Launch it, and click Open when macOS asks you to confirm.
+1. Download \`Coucou-Linux-$v-amd64.deb\` below and open it (or \`sudo apt install ./Coucou-Linux-$v-amd64.deb\`).
+2. Start **Coucou** from the app grid.
+3. Settings → GNOME → **Turn on extension**, then log out and back in.
+4. Settings → Claude Code → **Install hooks…**"
 
-Linux and Windows: see the [README](https://github.com/Louis-CFM/coucou#readme)."
-
-echo
-echo "──────── Release notes ────────"
-echo "$NOTES"
-echo "───────────────────────────────"
-echo
-read -r -p "Tag $(git rev-parse --short "$COMMIT") as $TAG and publish this release? [y/N] " ANSWER
-case "$ANSWER" in
-  y|Y|yes|oui|o|O) ;;
-  *) die "stopped before tagging. Run ./scripts/release.sh $VERSION --finish to publish later." ;;
-esac
-
-git tag "$TAG" "$COMMIT"
-git push origin "$TAG"
-
-gh release create "$TAG" "$ZIP" \
-  --repo Louis-CFM/coucou \
-  --title "Coucou $VERSION" \
-  --latest \
-  --notes "$NOTES"
-
-echo "✓ $TAG released: https://github.com/Louis-CFM/coucou/releases/tag/$TAG"
+git tag "$tag"
+git push origin "$tag"
+gh release create "$tag" "$out" release/SHA256SUMS --title "Coucou for Linux $v" --notes "$body"
