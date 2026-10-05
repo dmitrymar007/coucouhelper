@@ -193,6 +193,36 @@ export function registerHookHandlers(island: Island) {
   });
 }
 
+/** A tool call, as a PermissionRequest and its PostToolUse both carry it. */
+function toolKey(tool: string, input: unknown): string {
+  return `${tool} ${JSON.stringify(input ?? {})}`;
+}
+
+/**
+ * The session went on without the island: the question was answered where the
+ * agent runs. Claude Code in VS Code keeps the hook waiting after an answer in
+ * its own panel, so the relay never goes away and "approval-gone" never comes.
+ * A later event of the same session says it instead — this very call's
+ * PostToolUse (a question's input comes back with its answers, so only the tool
+ * is compared), or the end of the turn. The card goes, and the relay is let go.
+ */
+function settledElsewhere(island: Island, name: string, payload: HookPayload) {
+  const sid = payload.session_id ?? "";
+  if (!sid) return;
+  const after = name === "PostToolUse" || name === "PostToolUseFailure";
+  const turnOver = name === "Stop" || name === "StopFailure" || name === "UserPromptSubmit" || name === "SessionEnd";
+  const a = State.pendingApproval;
+  if (a && a.sessionId === sid && (turnOver || (after && toolKey(payload.tool_name ?? "Tool", payload.tool_input) === a.toolKey))) {
+    void Bridge.approvalDecline(a.requestId);
+    clearApproval(island, a.agentId);
+  }
+  const q = State.pendingQuestion;
+  if (q && q.sessionId === sid && (turnOver || (after && payload.tool_name === "AskUserQuestion"))) {
+    void Bridge.approvalDecline(q.requestId);
+    clearQuestion(island, q.agentId);
+  }
+}
+
 /** Takes the question card down and hands the island back. */
 function clearQuestion(island: Island, agentId: string) {
   if (pendingTimeout != null) window.clearTimeout(pendingTimeout);
@@ -335,6 +365,8 @@ function handleHook(island: Island, payload: HookPayload) {
     }
   };
 
+  settledElsewhere(island, name, payload);
+
   switch (name) {
     case "SessionStart":
       ensurePill();
@@ -456,7 +488,9 @@ function handleHook(island: Island, payload: HookPayload) {
         }
         ensurePill();
         if (pendingTimeout != null) window.clearTimeout(pendingTimeout);
-        State.pendingQuestion = { requestId, agentId, questions, index: 0, answers: {}, picked: [] };
+        State.pendingQuestion = {
+          requestId, agentId, sessionId: payload.session_id ?? "", questions, index: 0, answers: {}, picked: [],
+        };
         void Bridge.approvalAck(requestId);
         State.updateTask(agentId, "question");
         State.isPinned = true;
@@ -483,6 +517,7 @@ function handleHook(island: Island, payload: HookPayload) {
         sessionId: payload.session_id ?? "",
         tool,
         command: approvalTarget(tool, input),
+        toolKey: toolKey(tool, input),
       };
       // The relay's short ack window closes in 800 ms; everything below this
       // line is synchronous, so the card really is up by the time it lands.

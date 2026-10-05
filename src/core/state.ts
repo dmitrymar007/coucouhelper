@@ -48,6 +48,8 @@ export interface ApprovalInfo {
   sessionId: string;
   tool: string;
   command: string;
+  /** Tool name and input, to recognise this call's PostToolUse. */
+  toolKey: string;
 }
 
 /** One question an agent asks (AskUserQuestion, opencode's question tool). */
@@ -62,6 +64,7 @@ export interface AgentQuestion {
 export interface QuestionInfo {
   requestId: string;
   agentId: string;
+  sessionId: string;
   questions: AgentQuestion[];
   /** The question on screen. */
   index: number;
