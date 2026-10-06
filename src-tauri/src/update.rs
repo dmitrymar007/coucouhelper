@@ -278,7 +278,9 @@ async fn download_and_install(version: &str, deb_name: &str, deb_url: &str, sums
     let path = dir.join(deb_name);
     std::fs::write(&path, &deb).map_err(|e| format!("{}: {e}", path.display()))?;
 
-    // coreutils' sha256sum, rather than one more crate for one hash.
+    // coreutils' sha256sum, rather than one more crate for one hash. This
+    // check only spares a password prompt for a broken download: the one
+    // that counts runs as root, below.
     let out = tokio::process::Command::new("sha256sum")
         .arg(&path)
         .output()
@@ -288,11 +290,15 @@ async fn download_and_install(version: &str, deb_name: &str, deb_url: &str, sums
     if actual != expected {
         return Err(format!("the downloaded {deb_name} does not match its checksum"));
     }
+    if expected.len() != 64 || !expected.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("SHA256SUMS holds no proper checksum".into());
+    }
 
     log::line(format!("update: installing {version} through pkexec"));
     let status = tokio::process::Command::new("pkexec")
-        .args(["/usr/bin/apt-get", "install", "-y"])
+        .args(["/bin/sh", "-c", ROOT_INSTALL, "coucou-update"])
         .arg(&path)
+        .arg(&expected)
         .status()
         .await
         .map_err(|e| format!("pkexec: {e}"))?;
@@ -300,9 +306,24 @@ async fn download_and_install(version: &str, deb_name: &str, deb_url: &str, sums
         Some(0) => Ok(()),
         // pkexec: 126 = the password dialog was dismissed, 127 = not authorised.
         Some(126) | Some(127) => Err("Installation cancelled.".into()),
+        Some(3) => Err(format!("the {deb_name} handed to apt did not match its checksum; nothing was installed")),
         code => Err(format!("apt-get failed ({code:?}).")),
     }
 }
+
+/// Run by root through pkexec, with the downloaded package ($1) and its
+/// checksum ($2). The download sits in the user's cache, where anything
+/// running as the user could swap it between our check and apt reading it —
+/// and root would then install whatever was put there. So root copies it
+/// into a directory only root can write, checks that copy, and installs that
+/// very file. $1 and $2 are arguments, never part of the script text.
+const ROOT_INSTALL: &str = r#"set -eu
+d=$(mktemp -d)
+trap 'rm -rf "$d"' EXIT
+cp -- "$1" "$d/update.deb"
+printf '%s  %s\n' "$2" "$d/update.deb" | sha256sum -c --status || exit 3
+/usr/bin/apt-get install -y "$d/update.deb"
+"#;
 
 /// Starts the new /usr/bin/coucou once this one is gone, then quits.
 fn restart(app: &AppHandle) {

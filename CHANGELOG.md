@@ -2,6 +2,10 @@
 
 Coucou for Linux.
 
+## 0.2.5 — October 6, 2026
+
+- Updates: the package's checksum is now checked by root, on a copy in a folder only root can write, right before apt installs that copy. Before, a program running as you could have swapped the downloaded file between Coucou's check and the installation and had its own package installed as root.
+
 ## 0.2.4 — October 6, 2026
 
 - Updates: a packaged Coucou checks GitHub for a newer release every few hours (Settings → Updates; it can be turned off). The island says so once, and the tray's **Update to …** or Settings installs it — the package is checked against the release's SHA256SUMS, apt installs it after GNOME asks for your password, and Coucou starts again.
