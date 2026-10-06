@@ -2,6 +2,10 @@
 
 Coucou for Linux.
 
+## 0.2.3 — October 6, 2026
+
+- GNOME: with the island folded, the middle of the top of the screen could stop taking clicks until the island was opened again. GTK put the island window's click area back to the whole window whenever it re-laid it out (switching windows can cause that); the island's own area is now one GTK keeps.
+
 ## 0.2.2 — October 6, 2026
 
 - A question or permission request from an agent that is not on screen opens its card at once, on that agent's pill, and the pill you were on comes back after you answer (as on the Mac). It used to show only a badge.
