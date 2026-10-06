@@ -329,7 +329,9 @@ function buildOverview(actions: ViewActions): ViewHost {
 }
 
 function buildPill(task: AgentTask, actions: ViewActions): HTMLElement {
-  const label = task.name;
+  // Claude Code's task is named after the session's project; its pill says who
+  // it is, as the Mac's does (a pill called "coucou" was Claude Code in disguise).
+  const label = task.source === "claudeCode" ? "Claude Code" : task.name;
   const canvas = createMiniBot(task, 24);
   const pill = h(
     "div",

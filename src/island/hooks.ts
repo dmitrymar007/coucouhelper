@@ -223,6 +223,25 @@ function settledElsewhere(island: Island, name: string, payload: HookPayload) {
   }
 }
 
+/**
+ * The pill the user was on before a card took the island over. A card is for
+ * acting on now, so it opens on its own agent's pill even when another one
+ * held the view; that pill comes back once the card goes, as on the Mac.
+ */
+let returnFocus: string | null = null;
+
+function takeFocus(agentId: string) {
+  if (State.focusId === agentId) return;
+  returnFocus = State.focusId;
+  State.setFocus(agentId);
+}
+
+function giveFocusBack() {
+  const id = returnFocus;
+  returnFocus = null;
+  if (id && State.tasks.some((t) => t.id === id)) State.setFocus(id);
+}
+
 /** Takes the question card down and hands the island back. */
 function clearQuestion(island: Island, agentId: string) {
   if (pendingTimeout != null) window.clearTimeout(pendingTimeout);
@@ -232,6 +251,7 @@ function clearQuestion(island: Island, agentId: string) {
   island.dropPin();
   State.updateTask(agentId, "working");
   State.setPillBadge(agentId, null);
+  giveFocusBack();
   if (State.view === "question") island.setView(State.defaultView());
   State.notify();
 }
@@ -311,6 +331,7 @@ function clearApproval(island: Island, agentId: string) {
   island.dropPin();
   State.updateTask(agentId, "working");
   State.setPillBadge(agentId, null);
+  giveFocusBack();
   if (State.view === "approval") island.setView(State.defaultView());
   State.notify();
 }
@@ -495,12 +516,8 @@ function handleHook(island: Island, payload: HookPayload) {
         State.updateTask(agentId, "question");
         State.isPinned = true;
         Sound.play("question");
-        if (focused) {
-          island.alert("question");
-        } else {
-          State.setPillBadge(agentId, "approval");
-          island.reveal();
-        }
+        takeFocus(agentId);
+        island.alert("question");
         pendingTimeout = window.setTimeout(() => {
           pendingTimeout = null;
           if (State.pendingQuestion) clearQuestion(island, State.pendingQuestion.agentId);
@@ -525,15 +542,8 @@ function handleHook(island: Island, payload: HookPayload) {
       State.updateTask(agentId, "approval");
       State.isPinned = true;
       Sound.play("approval");
-      if (focused) {
-        island.alert("approval");
-      } else {
-        // Another agent holds the view, so the card would yank it away. The badge
-        // is the signal instead — but it has to be on screen for that to mean
-        // anything, hence the reveal. We just told the relay a human can act.
-        State.setPillBadge(agentId, "approval");
-        island.reveal();
-      }
+      takeFocus(agentId);
+      island.alert("approval");
       // Coucou answers within 108 s or not at all; after that the terminal has
       // taken over and the card would be lying.
       pendingTimeout = window.setTimeout(() => {
