@@ -32,12 +32,12 @@ original project.
   each tool it runs, done or failed. Several sessions of one agent are listed
   with their project, state and context use.
 - **Approve from the island** — permission requests show up with **Deny /
-  Allow**, from any window with **Super+Shift+N / Super+Shift+Y**. Whichever
+  Allow**, from any window with **Alt+Shift+N / Alt+Shift+Y**. Whichever
   answers first, the island or the terminal, wins. A request from an agent that
   is not on screen opens its own card; several at once wait in line
   ("1 more waiting").
 - **Answer questions** — when an agent asks you to choose, the options become
-  buttons, or **Super+Shift+1…9** (**Super+Shift+Enter** ends a several-answers
+  buttons, or **Alt+Shift+1…9** (**Alt+Shift+Enter** ends a several-answers
   question).
 - **What a turn did** — when an agent finishes, its card says which files it
   changed (or how many), how long it took and the tokens it used ("312k in ·
@@ -126,8 +126,8 @@ the terminal as usual.
 | Drag a file onto the island | Mochi turns into a box, swallows it, then offers to answer questions about it |
 | Drag Mochi out of the open island onto a window | That window becomes the subject of a new chat |
 | `Esc` or a click elsewhere | Closes the island |
-| Super+Shift+Y / Super+Shift+N | Allows / denies the request on the card, from any window |
-| Super+Shift+1…9, Super+Shift+Enter | Picks an answer / ends a several-answers question |
+| Alt+Shift+Y / Alt+Shift+N | Allows / denies the request on the card, from any window |
+| Alt+Shift+1…9, Alt+Shift+Enter | Picks an answer / ends a several-answers question |
 | Tray icon | Open Coucou, Settings…, Pause, Stop chat, Check for updates / Update to …, Quit |
 
 The shortcuts exist only while a card is up, and only with the GNOME

@@ -414,14 +414,14 @@ function clearApproval(island: Island, agentId: string) {
 }
 
 // ── Card shortcuts ───────────────────────────────────────────────────────────
-// Super+Shift+Y allows, Super+Shift+N denies, Super+Shift+1…9 picks an answer
-// and Super+Shift+Return ends a several-answers question — from any window,
+// Alt+Shift+Y allows, Alt+Shift+N denies, Alt+Shift+1…9 picks an answer
+// and Alt+Shift+Return ends a several-answers question — from any window,
 // and only while the card is up: the GNOME extension grabs them for that time.
 
-const KEY_ALLOW = "<Super><Shift>y";
-const KEY_DENY = "<Super><Shift>n";
-const KEY_DONE = "<Super><Shift>Return";
-const keyForOption = (i: number) => `<Super><Shift>${i + 1}`;
+const KEY_ALLOW = "<Alt><Shift>y";
+const KEY_DENY = "<Alt><Shift>n";
+const KEY_DONE = "<Alt><Shift>Return";
+const keyForOption = (i: number) => `<Alt><Shift>${i + 1}`;
 
 let grabbedKeys = "";
 

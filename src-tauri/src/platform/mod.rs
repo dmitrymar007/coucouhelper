@@ -26,7 +26,7 @@ pub enum ShellEvent {
     /// Pointer relative to the island window, logical pixels, and whether a
     /// mouse button is held.
     Pointer { x: f64, y: f64, pressed: bool },
-    /// A card shortcut was pressed, e.g. `<Super><Shift>y`.
+    /// A card shortcut was pressed, e.g. `<Alt><Shift>y`.
     CardKey(String),
 }
 

@@ -195,7 +195,7 @@ pub fn drop_stale_shell_extension() {
     gnome_shell::drop_stale_user_copy();
 }
 
-/// The card shortcuts (Super+Shift+Y, N, 1…9, Return) to grab while a card
+/// The card shortcuts (Alt+Shift+Y, N, 1…9, Return) to grab while a card
 /// is up; only the GNOME extension can grab keys for the whole desktop.
 pub fn set_card_keys(keys: Vec<String>) {
     if gnome_shell::active() {

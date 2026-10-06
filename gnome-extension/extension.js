@@ -43,13 +43,13 @@ const BUTTONS =
 
 /**
  * The only shortcuts the app may have grabbed, and only while a card is up:
- * Super+Shift+Y allows, Super+Shift+N denies, Super+Shift+1…9 picks an answer,
- * Super+Shift+Return ends a several-answers question. (Super+N and Super+1…9
- * alone already belong to GNOME and the dock.)
+ * Alt+Shift+Y allows, Alt+Shift+N denies, Alt+Shift+1…9 picks an answer,
+ * Alt+Shift+Return ends a several-answers question. All are free in GNOME
+ * (Super+N and Super+1…9 belong to it and the dock).
  */
 const CARD_KEYS = new Set([
-    '<Super><Shift>y', '<Super><Shift>n', '<Super><Shift>Return',
-    ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => `<Super><Shift>${n}`),
+    '<Alt><Shift>y', '<Alt><Shift>n', '<Alt><Shift>Return',
+    ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => `<Alt><Shift>${n}`),
 ]);
 
 /** Coucou's executable is called this in every build — necessary, never enough. */

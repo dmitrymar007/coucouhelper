@@ -467,7 +467,7 @@ function buildQuestion(actions: ViewActions): ViewHost {
         clear(row);
         current.options.forEach((o, i) => {
           const on = q.picked.includes(o.label);
-          // The digit is Super+Shift+<digit>, as Y and N are on the permission card.
+          // The digit is Alt+Shift+<digit>, as Y and N are on the permission card.
           const key = i < 9 ? String(i + 1) : undefined;
           const b = btn(o.label.slice(0, 32), current.multiSelect && !on ? "secondary" : "primary", () => actions.answer(o.label), key);
           if (o.description) b.title = o.description;

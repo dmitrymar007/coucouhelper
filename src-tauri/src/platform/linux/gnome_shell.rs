@@ -45,7 +45,7 @@ struct Wanted {
     tracking: bool,
     focusable: bool,
     placement: String,
-    /** Shortcuts to grab while a card is up (Super+Shift+Y…). */
+    /** Shortcuts to grab while a card is up (Alt+Shift+Y…). */
     card_keys: Vec<String>,
 }
 

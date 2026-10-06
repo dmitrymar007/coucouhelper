@@ -2,6 +2,10 @@
 
 Coucou for Linux.
 
+## 0.2.8 — October 6, 2026
+
+- The card shortcuts move to Alt+Shift: Alt+Shift+Y allows, Alt+Shift+N denies, Alt+Shift+1…9 picks an answer, Alt+Shift+Enter ends a several-answers question. The GNOME extension changes: log out and back in once after updating.
+
 ## 0.2.7 — October 6, 2026
 
 - GNOME: a packaged Coucou started at login waits for its extension again. It only looked for the extension in ~/.local, so with the package's copy it fell back to the window below the top bar.
