@@ -177,7 +177,7 @@ fn read_event() -> Option<(String, String, Option<serde_json::Value>)> {
         .unwrap_or(arg_event);
     map.insert("hook_event_name".into(), serde_json::Value::String(event.clone()));
 
-    // How full the model's context is, and what the turn just finished cost:
+    // How full the model's context is, and what the turn just finished used:
     // from the session's own transcript, on Stop only. The transcript itself
     // never leaves this process.
     if event == "Stop" && !map.contains_key("tokens") {
@@ -189,8 +189,9 @@ fn read_event() -> Option<(String, String, Option<serde_json::Value>)> {
             if let Some(tokens) = context_tokens(&text) {
                 map.insert("tokens".into(), serde_json::json!(tokens));
             }
-            if let Some(cost) = turn_cost(&text) {
-                map.insert("turn_cost".into(), serde_json::json!(cost));
+            if let Some((read, wrote)) = turn_tokens(&text) {
+                map.insert("turn_tokens_in".into(), serde_json::json!(read));
+                map.insert("turn_tokens_out".into(), serde_json::json!(wrote));
             }
         }
     }
@@ -275,43 +276,14 @@ fn usage_context(usage: &serde_json::Value) -> Option<u64> {
     (total > 0).then_some(total)
 }
 
-/// API prices per million tokens: input, output, cache read. A cache write
-/// costs 1.25× input for five minutes, 2× for an hour. Matched by prefix, so
-/// dated ids (claude-haiku-4-5-20251001) find their model. With a Claude
-/// subscription nothing is billed per token: this is what the turn would have
-/// cost on the API.
-const PRICES: &[(&str, f64, f64, f64)] = &[
-    ("claude-fable-5-1", 10.0, 50.0, 0.25),
-    ("claude-mythos-5-1", 10.0, 50.0, 0.25),
-    ("claude-fable-5", 10.0, 50.0, 1.0),
-    ("claude-mythos-5", 10.0, 50.0, 1.0),
-    ("claude-opus-5-5", 4.0, 20.0, 0.20),
-    ("claude-opus-5", 5.0, 25.0, 0.50),
-    ("claude-opus-4-8", 5.0, 25.0, 0.50),
-    ("claude-opus-4-7", 5.0, 25.0, 0.50),
-    ("claude-opus-4-6", 5.0, 25.0, 0.50),
-    ("claude-sonnet-5-5", 2.0, 10.0, 0.20),
-    ("claude-sonnet-5", 2.0, 10.0, 0.20),
-    ("claude-sonnet-4-6", 3.0, 15.0, 0.30),
-    ("claude-haiku-4-5", 1.0, 5.0, 0.10),
-];
-
-fn price(model: &str) -> Option<(f64, f64, f64)> {
-    // Longest prefix first: claude-opus-5-5 before claude-opus-5.
-    PRICES
-        .iter()
-        .filter(|(id, ..)| model.starts_with(id))
-        .max_by_key(|(id, ..)| id.len())
-        .map(|&(_, i, o, r)| (i, o, r))
-}
-
-/// What the turn that just ended cost: every model call since the user's
-/// last prompt. Each answer is written once per content block, all with the
-/// same usage, so calls are counted by message id. None when a call came
-/// from a model with no known price, rather than a figure that is too low.
-fn turn_cost(text: &str) -> Option<f64> {
+/// What the turn that just ended used: every model call since the user's
+/// last prompt — tokens read (input and the prompt cache, read or written)
+/// and tokens written (output, thinking included). Each answer is written
+/// once per content block, all with the same usage, so calls are counted by
+/// message id.
+fn turn_tokens(text: &str) -> Option<(u64, u64)> {
     let mut seen = std::collections::HashSet::new();
-    let mut total = 0.0;
+    let (mut read, mut wrote) = (0u64, 0u64);
     let mut calls = 0;
     for line in text.lines().rev() {
         let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { continue };
@@ -328,26 +300,12 @@ fn turn_cost(text: &str) -> Option<f64> {
         if !id.is_empty() && !seen.insert(id) {
             continue;
         }
-        let n = |k: &str| usage.get(k).and_then(|x| x.as_u64()).unwrap_or(0) as f64;
-        let input = n("input_tokens");
-        let output = n("output_tokens");
-        let read = n("cache_read_input_tokens");
-        let written = n("cache_creation_input_tokens");
-        if input + output + read + written == 0.0 {
-            continue; // a synthetic message: nothing was called
-        }
-        let model = message.get("model").and_then(|m| m.as_str()).unwrap_or("");
-        let (p_in, p_out, p_read) = price(model)?;
-        let split = usage.get("cache_creation");
-        let hour = split
-            .and_then(|c| c.get("ephemeral_1h_input_tokens"))
-            .and_then(|x| x.as_u64())
-            .unwrap_or(0) as f64;
-        let five = (written - hour).max(0.0);
-        total += (input * p_in + output * p_out + read * p_read + five * p_in * 1.25 + hour * p_in * 2.0) / 1e6;
+        let n = |k: &str| usage.get(k).and_then(|x| x.as_u64()).unwrap_or(0);
+        read += n("input_tokens") + n("cache_read_input_tokens") + n("cache_creation_input_tokens");
+        wrote += n("output_tokens");
         calls += 1;
     }
-    (calls > 0).then_some(total)
+    (calls > 0).then_some((read, wrote))
 }
 
 /// A line the user typed, not a tool result or a note Claude Code added.
@@ -477,27 +435,20 @@ mod tests {
     }
 
     #[test]
-    fn a_turn_costs_its_calls_once_each_since_the_prompt() {
+    fn a_turn_counts_its_calls_once_each_since_the_prompt() {
         let text = [
             // The turn before: not counted.
-            r#"{"type":"assistant","message":{"id":"m0","model":"claude-opus-5-5","usage":{"input_tokens":1000000,"output_tokens":0}}}"#,
+            r#"{"type":"assistant","message":{"id":"m0","usage":{"input_tokens":500,"output_tokens":7}}}"#,
             r#"{"type":"user","message":{"content":"do it"}}"#,
             // One call written as two blocks, the same usage on each.
-            r#"{"type":"assistant","message":{"id":"m1","model":"claude-opus-5-5","usage":{"input_tokens":1000000,"output_tokens":100000}}}"#,
-            r#"{"type":"assistant","message":{"id":"m1","model":"claude-opus-5-5","usage":{"input_tokens":1000000,"output_tokens":100000}}}"#,
+            r#"{"type":"assistant","message":{"id":"m1","usage":{"input_tokens":10,"output_tokens":20}}}"#,
+            r#"{"type":"assistant","message":{"id":"m1","usage":{"input_tokens":10,"output_tokens":20}}}"#,
             r#"{"type":"user","message":{"content":[{"type":"tool_result","content":"ok"}]}}"#,
-            // Cache: 1M read at $0.20, 1M written for an hour at 2 × $4.
-            r#"{"type":"assistant","message":{"id":"m2","model":"claude-opus-5-5","usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":1000000,"cache_creation_input_tokens":1000000,"cache_creation":{"ephemeral_1h_input_tokens":1000000}}}}"#,
+            r#"{"type":"assistant","message":{"id":"m2","usage":{"input_tokens":1,"output_tokens":2,"cache_read_input_tokens":1000,"cache_creation_input_tokens":300}}}"#,
         ]
         .join("\n");
-        let cost = turn_cost(&text).unwrap();
-        assert!((cost - (4.0 + 2.0 + 0.2 + 8.0)).abs() < 1e-9, "{cost}");
-        // A dated id finds its model; claude-opus-5 does not take Opus 5.5's price.
-        assert_eq!(price("claude-haiku-4-5-20251001"), Some((1.0, 5.0, 0.10)));
-        assert_eq!(price("claude-opus-5"), Some((5.0, 25.0, 0.50)));
-        // An unknown model gives no figure at all.
-        let unknown = r#"{"type":"assistant","message":{"id":"x","model":"gpt-9","usage":{"input_tokens":5}}}"#;
-        assert_eq!(turn_cost(unknown), None);
+        assert_eq!(turn_tokens(&text), Some((1311, 22)));
+        assert_eq!(turn_tokens(r#"{"type":"user","message":{"content":"hi"}}"#), None);
     }
 
     #[test]

@@ -519,7 +519,7 @@ function buildError(actions: ViewActions): ViewHost {
 
 // ── Finished ──────────────────────────────────────────────────────────────────
 
-/** "Edited a.ts, b.ts · 2 min 14 s · ≈$0.42": names while they fit, else a count. */
+/** "Edited a.ts, b.ts · 2 min 14 s · 312k in · 9.8k out": names while they fit, else a count. */
 export function turnSummary(turn: TurnSummary | null | undefined): string {
   if (!turn) return "";
   const parts: string[] = [];
@@ -534,11 +534,18 @@ export function turnSummary(turn: TurnSummary | null | undefined): string {
     else if (s < 3600) parts.push(`${Math.floor(s / 60)} min ${s % 60} s`);
     else parts.push(`${Math.floor(s / 3600)} h ${String(Math.floor((s % 3600) / 60)).padStart(2, "0")} min`);
   }
-  if (turn.cost !== undefined) {
-    const money = turn.cost < 0.01 ? "<$0.01" : `$${turn.cost.toFixed(2)}`;
-    parts.push(turn.apiEquivalent ? `≈${money}` : money);
+  if (turn.tokensIn !== undefined && turn.tokensOut !== undefined) {
+    parts.push(`${tokenCount(turn.tokensIn)} in · ${tokenCount(turn.tokensOut)} out`);
   }
   return parts.join(" · ");
+}
+
+/** 950 → "950", 9 812 → "9.8k", 312 400 → "312k", 1 340 000 → "1.3M". */
+function tokenCount(n: number): string {
+  if (n < 1000) return String(Math.round(n));
+  if (n < 10_000) return `${(n / 1000).toFixed(1)}k`;
+  if (n < 1_000_000) return `${Math.round(n / 1000)}k`;
+  return `${(n / 1_000_000).toFixed(1)}M`;
 }
 
 function buildFinished(actions: ViewActions): ViewHost {
@@ -559,8 +566,8 @@ function buildFinished(actions: ViewActions): ViewHost {
       const turn = State.focusTask?.lastTurn;
       detail.textContent = turnSummary(turn);
       detail.style.display = detail.textContent ? "" : "none";
-      detail.title = turn?.apiEquivalent
-        ? "≈ what this turn would cost on the API; a Claude subscription bills nothing per token"
+      detail.title = turn?.tokensIn !== undefined
+        ? "Tokens this turn: in = what the model read (prompt and cache), out = what it wrote"
         : "";
     },
   };

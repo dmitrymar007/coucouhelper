@@ -46,8 +46,6 @@ interface TurnRecord {
   editing?: string;
 }
 const turns = new Map<string, TurnRecord>();
-/** opencode reports a session's cost so far; a turn's is the difference. */
-const sessionCost = new Map<string, number>();
 const EDIT_TOOLS: ReadonlySet<string> = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
 
 function editedFile(input: Record<string, unknown> | undefined): string {
@@ -83,31 +81,20 @@ function noteTurn(name: string, agentId: string, payload: HookPayload) {
     case "Stop": {
       const rec = turns.get(sid);
       turns.delete(sid);
-      let cost: number | undefined;
-      let apiEquivalent = false;
-      if (typeof payload.turn_cost === "number" && Number.isFinite(payload.turn_cost)) {
-        cost = payload.turn_cost;
-        apiEquivalent = true;
-      } else if (typeof payload.cost === "number" && Number.isFinite(payload.cost)) {
-        const before = sessionCost.get(sid);
-        sessionCost.set(sid, payload.cost);
-        // Without the session's cost at the start of the turn, no figure.
-        if (before !== undefined) cost = Math.max(0, payload.cost - before);
-      }
+      const count = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined);
       const task = State.tasks.find((t) => t.id === agentId);
       if (task) {
         task.lastTurn = {
           files: rec?.files ?? [],
           ms: rec && rec.start > 0 ? Date.now() - rec.start : undefined,
-          cost,
-          apiEquivalent,
+          tokensIn: count(payload.turn_tokens_in),
+          tokensOut: count(payload.turn_tokens_out),
         };
       }
       break;
     }
     case "SessionEnd":
       turns.delete(sid);
-      sessionCost.delete(sid);
       break;
   }
 }
@@ -129,8 +116,9 @@ export interface HookPayload {
   /** On Stop: what the session has cost (opencode) and the context its last
    *  answer used (opencode's plugin; Claude Code's through the relay). */
   cost?: number;
-  /** On Stop, Claude Code: the turn's API price, worked out by the relay. */
-  turn_cost?: number;
+  /** On Stop: the tokens the turn read and wrote (relay for Claude Code, plugin for opencode). */
+  turn_tokens_in?: number;
+  turn_tokens_out?: number;
   tokens?: number;
 }
 

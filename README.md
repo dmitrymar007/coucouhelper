@@ -40,8 +40,8 @@ original project.
   buttons, or **Super+Shift+1…9** (**Super+Shift+Enter** ends a several-answers
   question).
 - **What a turn did** — when an agent finishes, its card says which files it
-  changed (or how many), how long it took and what it cost (for Claude Code on
-  a subscription: what it would cost on the API, marked ≈).
+  changed (or how many), how long it took and the tokens it used ("312k in ·
+  9.8k out": read, prompt cache included, and written).
 - **Back to the right window** — "Open terminal" brings back the terminal or
   editor window the session runs in.
 - **Chat** — through Claude Code on your own subscription (no API key), through

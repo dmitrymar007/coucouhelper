@@ -33,10 +33,10 @@ export interface TurnSummary {
   files: string[];
   /** Prompt to Stop, when Coucou saw the prompt. */
   ms?: number;
-  /** USD. Claude Code: what the turn would cost on the API. opencode: billed. */
-  cost?: number;
-  /** The cost is the API price of a turn run on a subscription. */
-  apiEquivalent?: boolean;
+  /** Tokens the model read in this turn: input and the prompt cache. */
+  tokensIn?: number;
+  /** Tokens it wrote: output, thinking included. */
+  tokensOut?: number;
 }
 
 /** One session of an agent: one terminal, one project. */
