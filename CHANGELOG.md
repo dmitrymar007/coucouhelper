@@ -2,7 +2,7 @@
 
 Coucou for Linux.
 
-## Unreleased
+## 0.2.2 — October 6, 2026
 
 - A question or permission request from an agent that is not on screen opens its card at once, on that agent's pill, and the pill you were on comes back after you answer (as on the Mac). It used to show only a badge.
 - Claude Code's pill is called Claude Code, not after the session's project.
