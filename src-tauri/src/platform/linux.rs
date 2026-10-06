@@ -190,6 +190,19 @@ pub fn shell_extension_start(on_event: impl Fn(ShellEvent) + 'static) {
 
 /// While the island is open the extension reports the pointer; hidden, it
 /// reports nothing and nothing runs.
+/// See gnome_shell::drop_stale_user_copy.
+pub fn drop_stale_shell_extension() {
+    gnome_shell::drop_stale_user_copy();
+}
+
+/// The card shortcuts (Alt+Shift+Y, N, 1…9, Return) to grab while a card
+/// is up; only the GNOME extension can grab keys for the whole desktop.
+pub fn set_card_keys(keys: Vec<String>) {
+    if gnome_shell::active() {
+        gnome_shell::set_card_keys(keys);
+    }
+}
+
 pub fn pointer_watch(on: bool) {
     if gnome_shell::active() {
         gnome_shell::set_tracking(on);

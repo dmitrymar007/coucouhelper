@@ -2,6 +2,41 @@
 
 Coucou for Linux.
 
+## 0.2.10 — October 6, 2026
+
+- The permission card puts the command first again and shows all of it: three lines on view and the rest by scrolling, with a note when there is more. 0.2.9 cut it off after three lines and put the agent's description above it; the description now comes below, as "Agent says: …" — it is the agent's claim, the command is what Allow approves.
+
+## 0.2.9 — October 6, 2026
+
+- Steps read better. A command shows what the agent says it is for ("Run · Build the .deb package") instead of a cut-off command line; without one, the command loses its leading `cd … &&`, paths are written from the project or from `~`, and long ones are cut in the middle. Files come name first: "Edit · hooks.ts — src/island".
+- The whole command is a hover away in the ticker, and a click on the ticker shows it on up to three lines (another click, or the next step, folds it).
+- The permission card shows the agent's description and the command on up to three lines; the card grows to fit. opencode passes the description once its plugin is updated (Settings → opencode → Update plugin).
+
+## 0.2.8 — October 6, 2026
+
+- The card shortcuts move to Alt+Shift: Alt+Shift+Y allows, Alt+Shift+N denies, Alt+Shift+1…9 picks an answer, Alt+Shift+Enter ends a several-answers question. The GNOME extension changes: log out and back in once after updating.
+
+## 0.2.7 — October 6, 2026
+
+- GNOME: a packaged Coucou started at login waits for its extension again. It only looked for the extension in ~/.local, so with the package's copy it fell back to the window below the top bar.
+
+## 0.2.6 — October 6, 2026
+
+- The finished card counts a turn in tokens instead of dollars: "312k in · 9.8k out" (read, prompt cache included · written, thinking included), for Claude Code and opencode alike. opencode needs the updated plugin: Settings → opencode → Update plugin.
+
+## 0.2.5 — October 6, 2026
+
+- Updates: the package's checksum is now checked by root, on a copy in a folder only root can write, right before apt installs that copy. Before, a program running as you could have swapped the downloaded file between Coucou's check and the installation and had its own package installed as root.
+
+## 0.2.4 — October 6, 2026
+
+- Updates: a packaged Coucou checks GitHub for a newer release every few hours (Settings → Updates; it can be turned off). The island says so once, and the tray's **Update to …** or Settings installs it — the package is checked against the release's SHA256SUMS, apt installs it after GNOME asks for your password, and Coucou starts again.
+- Keyboard: Super+Shift+Y allows and Super+Shift+N denies the request on the card, Super+Shift+1…9 picks an answer and Super+Shift+Enter ends a several-answers question — from any window, only while a card is up (needs the updated GNOME extension: log out and back in once).
+- Several requests at once wait in line instead of going back to the terminal: the card says how many more are waiting, and the next one comes up as soon as the first is answered.
+- When an agent finishes, its card says what the turn did: the files it changed (or how many, when there are more than three), how long it took and what it cost — opencode's real cost, and for Claude Code what it would cost on the API (≈).
+- Fixed: an answer with several choices given on the island never reached Claude Code (it takes them as one string, not a list). Long or many answers no longer push Done and In terminal off the question card: the card grows to fit them.
+- A packaged Coucou removes an older copy of its GNOME extension from ~/.local, which would otherwise keep running instead of the package's.
+
 ## 0.2.3 — October 6, 2026
 
 - GNOME: with the island folded, the middle of the top of the screen could stop taking clicks until the island was opened again. GTK put the island window's click area back to the whole window whenever it re-laid it out (switching windows can cause that); the island's own area is now one GTK keeps.

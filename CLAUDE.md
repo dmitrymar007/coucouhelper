@@ -25,7 +25,9 @@ CI: `.github/workflows/linux.yml` (tests, packages; publishes a release on a `li
 
 ## Rules
 - Secrets live in the Secret Service (keyring), never on disk or in git.
-- No telemetry. Network calls only to services the user configured.
+- No telemetry. Network calls only to services the user configured — and, for a packaged install with Settings → Updates on, one call to GitHub's releases API every few hours (`src-tauri/src/update.rs`).
+- Installing an update is always a click (tray, Settings): download, SHA256SUMS check, `pkexec apt-get install`, restart.
+- Card shortcuts (Alt+Shift+Y/N/1…9/Return) are grabbed by the GNOME extension only while a card is up, and only from its allowlist (`CARD_KEYS` in `gnome-extension/extension.js`).
 - Never block Claude Code: if the app doesn't answer, the hook exits immediately.
 - Never overwrite `~/.claude/settings.json`: dated backup, merge, show the diff, write only after the user confirms.
 - Never send an email or approve a Claude Code or opencode permission without an explicit click.

@@ -39,6 +39,19 @@ export interface WindowInfo {
 }
 
 /** Where the GNOME Shell extension stands (Linux). */
+/** Where Coucou's own updates stand (packaged installs). */
+export interface UpdateStatus {
+  applicable: boolean;
+  current: string;
+  latest: string | null;
+  available: boolean;
+  checkedAt: number | null;
+  checking: boolean;
+  installing: boolean;
+  error: string | null;
+  notes: string;
+}
+
 export interface ShellExtensionStatus {
   applicable: boolean;
   installed: boolean;
@@ -56,6 +69,8 @@ export const Bridge = {
 
   /** Shrink the window down to the invisible wake strip (hidden) or back to full. */
   setCollapsed: (collapsed: boolean) => call<void>("set_collapsed", { collapsed }),
+  /** Card shortcuts to grab desktop-wide (GNOME extension); [] lets them go. */
+  setCardKeys: (keys: string[]) => call<void>("set_card_keys", { keys }),
 
   /**
    * Pushes the island shape in window coordinates. Rust flips click-through from
@@ -132,6 +147,10 @@ export const Bridge = {
   opencodePluginRemove: () => callOrThrow<OpencodePluginStatus>("opencode_plugin_remove"),
   // ── GNOME Shell extension ────────────────────────────────────────────────
   shellExtensionStatus: () => call<ShellExtensionStatus>("shell_extension_status"),
+  updateStatus: () => call<UpdateStatus>("update_status"),
+  updateCheck: () => callOrThrow<UpdateStatus>("update_check"),
+  /** Downloads, checks and installs the newer release; Coucou then restarts. */
+  updateInstall: () => callOrThrow<void>("update_install"),
   /** Only from an explicit click in Settings. */
   shellExtensionInstall: () => callOrThrow<ShellExtensionStatus>("shell_extension_install"),
   /** Only from an explicit click in Settings. */

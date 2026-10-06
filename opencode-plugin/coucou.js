@@ -90,7 +90,7 @@ function permissionTarget(p) {
   const patterns = Array.isArray(p.patterns) ? p.patterns.join(", ") : "";
   switch (p.permission) {
     case "bash":
-      return { tool_name: "Bash", tool_input: { command: meta.command ?? patterns } };
+      return { tool_name: "Bash", tool_input: { command: meta.command ?? patterns, description: meta.description ?? "" } };
     case "edit":
     case "write":
       return { tool_name: toolName(p.permission), tool_input: { file_path: meta.filepath ?? meta.filePath ?? patterns } };
@@ -111,24 +111,45 @@ export const Coucou = async ({ client, directory }) => {
   const open = new Set();
   /** Permission requests on the island: id → relay process. */
   const asking = new Map();
-  /** Per session: each answer's cost, and the context of the latest one. */
+  /**
+   * Per session: each answer's cost and tokens (read: input and cache; written:
+   * output and reasoning), the context of the latest one, and the totals when
+   * the current turn began.
+   */
   const spend = new Map();
 
   function noteSpend(info) {
     if (info?.role !== "assistant" || !info.sessionID || !info.id) return;
-    const s = spend.get(info.sessionID) ?? { costs: new Map(), context: 0 };
+    const s = spend.get(info.sessionID) ?? { costs: new Map(), read: new Map(), wrote: new Map(), context: 0, turn: null };
     if (typeof info.cost === "number") s.costs.set(info.id, info.cost);
     const t = info.tokens;
     const context = t ? (t.input ?? 0) + (t.cache?.read ?? 0) + (t.cache?.write ?? 0) : 0;
     if (context > 0) s.context = context;
+    if (t) {
+      s.read.set(info.id, context);
+      s.wrote.set(info.id, (t.output ?? 0) + (t.reasoning ?? 0));
+    }
     spend.set(info.sessionID, s);
+  }
+
+  const sum = (m) => [...m.values()].reduce((a, b) => a + b, 0);
+
+  /** A prompt: what the session has used so far is where this turn starts. */
+  function turnStarts(sessionID) {
+    const s = spend.get(sessionID) ?? { costs: new Map(), read: new Map(), wrote: new Map(), context: 0, turn: null };
+    s.turn = { read: sum(s.read), wrote: sum(s.wrote) };
+    spend.set(sessionID, s);
   }
 
   function spent(sessionID) {
     const s = spend.get(sessionID);
     if (!s) return {};
-    const cost = [...s.costs.values()].reduce((a, b) => a + b, 0);
-    return { cost, tokens: s.context };
+    const out = { cost: sum(s.costs), tokens: s.context };
+    if (s.turn) {
+      out.turn_tokens_in = Math.max(0, sum(s.read) - s.turn.read);
+      out.turn_tokens_out = Math.max(0, sum(s.wrote) - s.turn.wrote);
+    }
+    return out;
   }
 
   const base = (event, sessionID) => ({ hook_event_name: event, session_id: sessionID, cwd: directory });
@@ -261,7 +282,10 @@ export const Coucou = async ({ client, directory }) => {
         .map((part) => part.text)
         .join("\n")
         .trim();
-      if (prompt) send("UserPromptSubmit", input.sessionID, { prompt: prompt.slice(0, 500) });
+      if (prompt) {
+        turnStarts(input.sessionID);
+        send("UserPromptSubmit", input.sessionID, { prompt: prompt.slice(0, 500) });
+      }
     },
     "tool.execute.before": async (input, output) => {
       send("PreToolUse", input.sessionID, { tool_name: toolName(input.tool), tool_input: toolInput(output?.args) });

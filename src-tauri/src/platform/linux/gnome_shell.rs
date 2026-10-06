@@ -45,6 +45,8 @@ struct Wanted {
     tracking: bool,
     focusable: bool,
     placement: String,
+    /** Shortcuts to grab while a card is up (Alt+Shift+Y…). */
+    card_keys: Vec<String>,
 }
 
 struct Link {
@@ -58,6 +60,7 @@ thread_local! {
         tracking: false,
         focusable: false,
         placement: "primary".into(),
+        card_keys: Vec::new(),
     });
     static LINK: RefCell<Option<Link>> = const { RefCell::new(None) };
     /// Where events go: set by `start`, on the main thread.
@@ -98,11 +101,20 @@ pub fn on_bus() -> bool {
 /// Whether GNOME is going to start the extension: installed, switched on, and
 /// user extensions allowed. At login Coucou can start before GNOME has loaded
 /// its extensions, so this is what tells "not yet" from "not at all".
+///
+/// The copy GNOME runs is the user's when there is one (a user extension,
+/// which GNOME's switch can turn off), else the package's (a system one).
+/// Looking only for the user's copy, a packaged Coucou started at login
+/// decided there was no extension and fell back to the window below the bar.
 pub fn expected() -> bool {
     let Some(settings) = shell_settings() else { return false };
-    install_dir().join("metadata.json").is_file()
-        && enabled_list(&settings).iter().any(|u| u == UUID)
-        && !settings.boolean("disable-user-extensions")
+    if !enabled_list(&settings).iter().any(|u| u == UUID) {
+        return false;
+    }
+    if install_dir().join("metadata.json").is_file() {
+        return !settings.boolean("disable-user-extensions");
+    }
+    std::path::Path::new(PACKAGED_DIR).join("metadata.json").is_file()
 }
 
 /// Follows the extension for the rest of the run. Main thread only.
@@ -155,14 +167,22 @@ fn register(connection: gio::DBusConnection, owner: String) {
             let subscription = conn.signal_subscribe(
                 Some(owner.as_str()),
                 Some(IFACE),
-                Some("Pointer"),
+                None,
                 Some(OBJECT_PATH),
                 None,
                 gio::DBusSignalFlags::NONE,
-                move |_conn, _sender, _path, _iface, _signal, params| {
-                    if let Some((x, y, pressed)) = params.get::<(f64, f64, bool)>() {
-                        emit(Event::Pointer { x, y, pressed });
+                move |_conn, _sender, _path, _iface, signal, params| match signal {
+                    "Pointer" => {
+                        if let Some((x, y, pressed)) = params.get::<(f64, f64, bool)>() {
+                            emit(Event::Pointer { x, y, pressed });
+                        }
                     }
+                    "CardKey" => {
+                        if let Some((accel,)) = params.get::<(String,)>() {
+                            emit(Event::CardKey(accel));
+                        }
+                    }
+                    _ => {}
                 },
             );
             *REMOTE.lock().unwrap() = Some((conn.clone(), owner.clone()));
@@ -174,6 +194,9 @@ fn register(connection: gio::DBusConnection, owner: String) {
                 send("SetPlacement", (w.placement.as_str(),).to_variant());
                 send("SetTracking", (w.tracking,).to_variant());
                 send("SetFocusable", (w.focusable,).to_variant());
+                if !w.card_keys.is_empty() {
+                    send("SetCardKeys", (w.card_keys.clone(),).to_variant());
+                }
             });
             emit(Event::Active(true));
         },
@@ -227,6 +250,14 @@ pub fn set_tracking(on: bool) {
 }
 
 /// Lets the island take the keyboard (the chat) or keeps it away.
+/// The card shortcuts to grab now; none lets them all go.
+pub fn set_card_keys(keys: Vec<String>) {
+    on_main(move || {
+        WANTED.with(|w| w.borrow_mut().card_keys = keys.clone());
+        send("SetCardKeys", (keys,).to_variant());
+    });
+}
+
 pub fn set_focusable(on: bool) {
     on_main(move || {
         WANTED.with(|w| w.borrow_mut().focusable = on);
@@ -405,6 +436,24 @@ pub fn install() -> Result<(), String> {
     }
     crate::log::line("GNOME extension installed");
     Ok(())
+}
+
+/// A packaged Coucou keeps its extension in the package. An older copy of
+/// ours in the user's folder (from a build that installed it there) would run
+/// instead and never see an update, so it goes; GNOME loads the package's at
+/// the next login. Nothing happens unless the package's copy is this build's.
+pub fn drop_stale_user_copy() {
+    let dir = install_dir();
+    if !matches_bundled(std::path::Path::new(PACKAGED_DIR)) || !dir.ends_with(UUID) || !dir.is_dir() {
+        return;
+    }
+    if matches_bundled(&dir) {
+        return;
+    }
+    match std::fs::remove_dir_all(&dir) {
+        Ok(()) => crate::log::line("GNOME extension: removed an older copy in ~/.local; the package's runs from the next login"),
+        Err(err) => crate::log::line(format!("GNOME extension: could not remove the older copy: {err}")),
+    }
 }
 
 /// Turns the extension off (GNOME stops it at once) and deletes the user's

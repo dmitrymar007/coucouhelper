@@ -41,6 +41,13 @@ pub struct Settings {
     /// The island has told the user once about the GNOME extension.
     #[serde(default)]
     pub shell_hint_shown: bool,
+    /// Look for a newer release on GitHub every few hours (packaged installs).
+    #[serde(default = "default_true")]
+    pub auto_update: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_model() -> String {
@@ -82,6 +89,7 @@ impl Default for Settings {
             chat_idle_minutes: default_chat_idle_minutes(),
             last_chat_session: None,
             shell_hint_shown: false,
+            auto_update: true,
         }
     }
 }

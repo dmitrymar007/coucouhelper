@@ -16,6 +16,7 @@ mod platform;
 mod secrets;
 mod settings;
 mod tray;
+mod update;
 
 use std::process::Command;
 use std::sync::atomic::Ordering;
@@ -131,6 +132,29 @@ fn set_island_rect(app: AppHandle, shared: State<Shared>, x: f64, y: f64, width:
     if platform::CLICK_THROUGH_BY_REGION {
         island::refresh_click_through(&app, &shared.gate);
     }
+}
+
+#[tauri::command]
+fn update_status(app: AppHandle) -> update::UpdateStatus {
+    update::status(&app)
+}
+
+#[tauri::command]
+async fn update_check(app: AppHandle) -> Result<update::UpdateStatus, String> {
+    update::check(&app).await?;
+    Ok(update::status(&app))
+}
+
+/// Only ever from a click (Settings, the tray, the island's note).
+#[tauri::command]
+async fn update_install(app: AppHandle) -> Result<(), String> {
+    update::install(&app).await
+}
+
+/// The shortcuts to grab for the card on screen; empty when there is none.
+#[tauri::command]
+fn set_card_keys(keys: Vec<String>) {
+    platform::set_card_keys(keys);
 }
 
 #[tauri::command]
@@ -621,6 +645,7 @@ pub fn run() {
             gate: gate.clone(),
         })
         .manage(Pending::default())
+        .manage(update::Updates::default())
         .manage(Chat::default())
         .invoke_handler(tauri::generate_handler![
             boot,
@@ -670,6 +695,10 @@ pub fn run() {
             open_n8n,
             open_settings_window,
             set_paused,
+            set_card_keys,
+            update_status,
+            update_check,
+            update_install,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
@@ -707,12 +736,17 @@ pub fn run() {
                 platform::ShellEvent::Pointer { x, y, pressed } => {
                     island::shell_pointer(&shell_app, &shell_gate, x, y, pressed);
                 }
+                platform::ShellEvent::CardKey(accel) => {
+                    log::line(format!("card key {accel}"));
+                    let _ = shell_app.emit_to(island::WINDOW_LABEL, "card-key", accel);
+                }
             });
 
             log::line(format!("--- Coucou {} started ---", env!("CARGO_PKG_VERSION")));
             hooks::ensure_hook_exe(&handle);
             socket::start(handle.clone());
             integrations::start(handle.clone());
+            update::start(handle.clone());
             Ok(())
         })
         .run(tauri::generate_context!())

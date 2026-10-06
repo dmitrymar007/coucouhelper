@@ -13,6 +13,8 @@ export interface AgentTask {
   state: BotStateName;
   stepIndex: number;
   steps: string[];
+  /** Each step in full (the whole command, the whole path), alongside `steps`. */
+  stepFull?: string[];
   source: AgentSource;
   isIntegration: boolean;
   emote?: BotEmoteName | null;
@@ -23,6 +25,20 @@ export interface AgentTask {
   sessionPids?: number[] | null;
   /** Every live session of this agent, most recent first. */
   sessions?: AgentSession[];
+  /** What the turn that just ended did, for the finished card. */
+  lastTurn?: TurnSummary | null;
+}
+
+/** One turn of a session, from the prompt to Stop. */
+export interface TurnSummary {
+  /** Files edited or written, in order, without repeats. */
+  files: string[];
+  /** Prompt to Stop, when Coucou saw the prompt. */
+  ms?: number;
+  /** Tokens the model read in this turn: input and the prompt cache. */
+  tokensIn?: number;
+  /** Tokens it wrote: output, thinking included. */
+  tokensOut?: number;
 }
 
 /** One session of an agent: one terminal, one project. */
@@ -48,6 +64,8 @@ export interface ApprovalInfo {
   sessionId: string;
   tool: string;
   command: string;
+  /** What the agent says the command is for ("Build the .deb package"), or "". */
+  description: string;
   /** Tool name and input, to recognise this call's PostToolUse. */
   toolKey: string;
 }
@@ -71,6 +89,20 @@ export interface QuestionInfo {
   answers: Record<string, string | string[]>;
   /** Labels ticked so far on a question that takes several. */
   picked: string[];
+}
+
+/** A permission request or question waiting behind the card on screen. */
+export interface QueuedCard {
+  requestId: string;
+  agentId: string;
+  /** The hook payload as it came: the card is built from it when its turn comes. */
+  payload: {
+    session_id?: string;
+    tool_name?: string;
+    tool_input?: Record<string, unknown>;
+  };
+  /** Date.now() when the request came in: its relay's wait started then. */
+  arrivedAt: number;
 }
 
 export interface ChatMessage {
@@ -147,6 +179,8 @@ export interface Settings {
   chatIdleMinutes: number;
   /** Owned by Rust: the conversation "Continue last chat" picks up. */
   lastChatSession: string | null;
+  /** Look for a newer release on GitHub every few hours (packaged installs). */
+  autoUpdate: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -166,6 +200,7 @@ export const DEFAULT_SETTINGS: Settings = {
   opencodeModel: "",
   chatIdleMinutes: 30,
   lastChatSession: null,
+  autoUpdate: true,
 };
 
 type Listener = () => void;
@@ -198,6 +233,10 @@ class AppState {
   chatHistory: ChatMessage[] = [];
   pendingApproval: ApprovalInfo | null = null;
   pendingQuestion: QuestionInfo | null = null;
+  /** Pixels the question or approval card needs beyond its usual height (wrapped answers, a long command). */
+  cardExtra = 0;
+  /** Requests waiting behind the card on screen, oldest first. */
+  cardQueue: QueuedCard[] = [];
 
   integrations: Record<string, IntegrationInfo> = {};
 
@@ -244,11 +283,18 @@ class AppState {
     this.notify();
   }
 
-  appendStep(id: string, step: string) {
+  appendStep(id: string, step: string, full = step) {
     const t = this.tasks.find((x) => x.id === id);
     if (!t) return;
+    // Kept the same length as `steps`, whoever else set or cleared them.
+    const fulls = t.stepFull?.length === t.steps.length ? t.stepFull : [...t.steps];
     t.steps.push(step);
-    if (t.steps.length > 20) t.steps.shift();
+    fulls.push(full);
+    t.stepFull = fulls;
+    if (t.steps.length > 20) {
+      t.steps.shift();
+      fulls.shift();
+    }
     t.stepIndex = t.steps.length - 1;
     this.notify();
   }
