@@ -656,19 +656,20 @@ body {
   user-select: text;
 }
 
-/* The approval card's command: up to three lines, then an ellipsis. */
+/* The approval card's command: three lines on view, the rest by scrolling —
+   never cut off, it is what Allow approves. */
 .code.wrap {
   line-height: 16px;
+  max-height: 60px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
+  overflow-y: auto;
+  text-overflow: clip;
   flex-shrink: 0;
 }
 
-.approval-desc {
-  font-size: 12.5px;
+.approval-note {
+  font-size: 12px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

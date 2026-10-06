@@ -2,11 +2,15 @@
 
 Coucou for Linux.
 
+## 0.2.10 — October 6, 2026
+
+- The permission card puts the command first again and shows all of it: three lines on view and the rest by scrolling, with a note when there is more. 0.2.9 cut it off after three lines and put the agent's description above it; the description now comes below, as "Agent says: …" — it is the agent's claim, the command is what Allow approves.
+
 ## 0.2.9 — October 6, 2026
 
 - Steps read better. A command shows what the agent says it is for ("Run · Build the .deb package") instead of a cut-off command line; without one, the command loses its leading `cd … &&`, paths are written from the project or from `~`, and long ones are cut in the middle. Files come name first: "Edit · hooks.ts — src/island".
 - The whole command is a hover away in the ticker, and a click on the ticker shows it on up to three lines (another click, or the next step, folds it).
-- The permission card shows the agent's description above the command and the command on up to three lines; the card grows to fit. opencode passes the description once its plugin is updated (Settings → opencode → Update plugin).
+- The permission card shows the agent's description and the command on up to three lines; the card grows to fit. opencode passes the description once its plugin is updated (Settings → opencode → Update plugin).
 
 ## 0.2.8 — October 6, 2026
 

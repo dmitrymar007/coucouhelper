@@ -402,26 +402,33 @@ function waitingNote(): string {
 
 function buildApproval(actions: ViewActions): ViewHost {
   const who = h("div");
-  const desc = h("div", { class: "sub approval-desc" });
   const code = h("div", { class: "code wrap" });
+  const more = h("div", { class: "sub approval-note", text: "Scroll for the rest of the command" });
+  const desc = h("div", { class: "sub approval-note" });
   const row = h("div", { class: "actions" });
-  const el = h("div", { class: "view" }, card("amber", stack(116, 16, who, desc, code, row)));
+  const el = h("div", { class: "view" }, card("amber", stack(116, 16, who, code, more, desc, row)));
   let rowKey = "";
   return {
     el,
     sync() {
       clear(who);
       who.append(agentWho(State.focusTask, `needs permission${waitingNote()}`));
-      // What the agent says the command is for, then the command itself.
-      const about = State.pendingApproval?.description ?? "";
-      desc.textContent = about;
-      desc.style.display = about ? "" : "none";
-      // The whole point of approving here rather than in the terminal: this line
-      // is the command, the file path or the URL being authorised, not just the
-      // name of the tool asking. Up to three lines; all of it on hover.
+      // The whole point of approving here rather than in the terminal: this is
+      // the command, the file path or the URL being authorised, not just the
+      // name of the tool asking — first, and all of it: three lines, the rest
+      // a scroll away and said so, never cut off.
       const target = State.pendingApproval?.command || State.pendingApproval?.tool || "…";
-      code.textContent = target;
-      code.title = target;
+      if (code.textContent !== target) {
+        code.textContent = target;
+        code.scrollTop = 0;
+      }
+      // The agent's own words come second and look it: they are its claim
+      // about the command, not what is being approved.
+      const about = State.pendingApproval?.description ?? "";
+      desc.textContent = about ? `Agent says: ${about}` : "";
+      desc.style.display = about ? "" : "none";
+      const cut = code.scrollHeight > code.clientHeight + 1;
+      more.style.display = cut ? "" : "none";
       // Two buttons, built once. Rebuilding them between a mouse-down and a
       // mouse-up would swallow the click, and there is nothing left to vary:
       // "Always" is gone until the remembered-rules list exists to back it.
@@ -436,7 +443,8 @@ function buildApproval(actions: ViewActions): ViewHost {
       // A long command wraps and the card grows to show it, as the question
       // card does for its answers. Measured only while on screen.
       if (State.view !== "approval" || code.offsetHeight === 0) return;
-      const extra = Math.min(80, Math.max(0, code.offsetHeight - CODE_LINE_H) + (about ? desc.offsetHeight + 5 : 0));
+      const notes = (about ? desc.offsetHeight + 5 : 0) + (cut ? more.offsetHeight + 5 : 0);
+      const extra = Math.min(100, Math.max(0, code.offsetHeight - CODE_LINE_H) + notes);
       if (extra !== State.cardExtra) {
         State.cardExtra = extra;
         actions.refit();
