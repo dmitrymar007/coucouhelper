@@ -32,9 +32,16 @@ original project.
   each tool it runs, done or failed. Several sessions of one agent are listed
   with their project, state and context use.
 - **Approve from the island** — permission requests show up with **Deny /
-  Allow / Always**. Whichever answers first, the island or the terminal, wins.
+  Allow**, from any window with **Super+Shift+N / Super+Shift+Y**. Whichever
+  answers first, the island or the terminal, wins. A request from an agent that
+  is not on screen opens its own card; several at once wait in line
+  ("1 more waiting").
 - **Answer questions** — when an agent asks you to choose, the options become
-  buttons.
+  buttons, or **Super+Shift+1…9** (**Super+Shift+Enter** ends a several-answers
+  question).
+- **What a turn did** — when an agent finishes, its card says which files it
+  changed (or how many), how long it took and what it cost (for Claude Code on
+  a subscription: what it would cost on the API, marked ≈).
 - **Back to the right window** — "Open terminal" brings back the terminal or
   editor window the session runs in.
 - **Chat** — through Claude Code on your own subscription (no API key), through
@@ -119,7 +126,21 @@ the terminal as usual.
 | Drag a file onto the island | Mochi turns into a box, swallows it, then offers to answer questions about it |
 | Drag Mochi out of the open island onto a window | That window becomes the subject of a new chat |
 | `Esc` or a click elsewhere | Closes the island |
-| Tray icon | Open Coucou, Settings…, Pause, Stop chat, Quit |
+| Super+Shift+Y / Super+Shift+N | Allows / denies the request on the card, from any window |
+| Super+Shift+1…9, Super+Shift+Enter | Picks an answer / ends a several-answers question |
+| Tray icon | Open Coucou, Settings…, Pause, Stop chat, Check for updates / Update to …, Quit |
+
+The shortcuts exist only while a card is up, and only with the GNOME
+extension (it grabs them for that time).
+
+## Updates
+
+A packaged Coucou asks GitHub for the latest release every few hours (turn it
+off in **Settings → Updates**). When a newer one is out, the island says so once,
+and the tray offers **Update to …**: Coucou downloads the package, checks it
+against the release's `SHA256SUMS`, installs it with apt (GNOME asks for your
+password) and starts again. If the update changes the GNOME extension, log out
+and back in to load it.
 
 ## Build from source
 
@@ -166,6 +187,7 @@ strips the snap's GTK environment, which otherwise crashes the app with a
 
 ### Releases
 
+Installed Coucous find each release on their own (see [Updates](#updates)).
 `scripts/release.sh <version>` builds the .deb on this machine and publishes
 it as a GitHub release (tag `linux-v<version>`), with the matching
 `CHANGELOG.md` section as notes. Bump the version in `src-tauri/tauri.conf.json`,

@@ -44,6 +44,9 @@ fn main() {
         std::process::exit(0);
     }
     let Some((payload, event, questions)) = read_event() else { std::process::exit(0) };
+    // Claude Code takes one string per question (several answers joined by
+    // ", ", as its own picker writes them); opencode's plugin takes lists.
+    let lists = agent_arg().as_deref() == Some("opencode");
 
     let waits_for_answer = event == "PermissionRequest";
     let budget = if waits_for_answer { DECISION_BUDGET } else { FIRE_AND_FORGET_BUDGET };
@@ -58,7 +61,7 @@ fn main() {
     });
 
     if let Ok(Some(decision)) = rx.recv_timeout(budget) {
-        if let Some(json) = decision_json(&decision, questions.as_ref()) {
+        if let Some(json) = decision_json(&decision, questions.as_ref(), lists) {
             let mut out = std::io::stdout();
             let _ = writeln!(out, "{json}");
             let _ = out.flush();
@@ -76,16 +79,26 @@ fn main() {
 /// the questions themselves come from the request this relay received, never
 /// from the island, and go back as `updatedInput` the way the Agent SDK
 /// answers them (https://code.claude.com/docs/en/agent-sdk/user-input).
-fn decision_json(decision: &str, questions: Option<&serde_json::Value>) -> Option<String> {
+fn decision_json(decision: &str, questions: Option<&serde_json::Value>, lists: bool) -> Option<String> {
     let decision = decision.trim();
     if decision.starts_with('{') {
         let questions = questions?;
-        let answers = serde_json::from_str::<serde_json::Value>(decision).ok()?.get("answers")?.clone();
+        let mut answers = serde_json::from_str::<serde_json::Value>(decision).ok()?.get("answers")?.clone();
         let valid = answers.as_object().is_some_and(|map| {
             !map.is_empty() && map.values().all(|v| v.is_string() || v.as_array().is_some_and(|a| a.iter().all(|x| x.is_string())))
         });
         if !valid {
             return None;
+        }
+        if !lists {
+            // An array here makes Claude Code reject the whole answer, and the
+            // question silently goes back to the terminal.
+            for v in answers.as_object_mut()?.values_mut() {
+                if let Some(items) = v.as_array() {
+                    let joined = items.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(", ");
+                    *v = serde_json::Value::String(joined);
+                }
+            }
         }
         let output = serde_json::json!({
             "hookSpecificOutput": {
@@ -108,6 +121,17 @@ fn decision_json(decision: &str, questions: Option<&serde_json::Value>) -> Optio
     Some(format!(
         r#"{{"hookSpecificOutput":{{"hookEventName":"PermissionRequest","decision":{behavior}}}}}"#
     ))
+}
+
+/// The name after `--agent`, when the hook was installed for another agent.
+fn agent_arg() -> Option<String> {
+    let mut it = std::env::args().skip(1);
+    while let Some(arg) = it.next() {
+        if arg == "--agent" {
+            return it.next().filter(|a| !a.is_empty());
+        }
+    }
+    None
 }
 
 /// Reads stdin and returns the payload to forward, the event name, and the
@@ -153,15 +177,21 @@ fn read_event() -> Option<(String, String, Option<serde_json::Value>)> {
         .unwrap_or(arg_event);
     map.insert("hook_event_name".into(), serde_json::Value::String(event.clone()));
 
-    // How full the model's context is: from the session's own transcript, on
-    // Stop only. The transcript itself never leaves this process.
+    // How full the model's context is, and what the turn just finished cost:
+    // from the session's own transcript, on Stop only. The transcript itself
+    // never leaves this process.
     if event == "Stop" && !map.contains_key("tokens") {
-        let tokens = map
+        let text = map
             .get("transcript_path")
             .and_then(|v| v.as_str())
-            .and_then(|path| context_tokens(std::path::Path::new(path)));
-        if let Some(tokens) = tokens {
-            map.insert("tokens".into(), serde_json::json!(tokens));
+            .and_then(|path| read_transcript(std::path::Path::new(path)));
+        if let Some(text) = text {
+            if let Some(tokens) = context_tokens(&text) {
+                map.insert("tokens".into(), serde_json::json!(tokens));
+            }
+            if let Some(cost) = turn_cost(&text) {
+                map.insert("turn_cost".into(), serde_json::json!(cost));
+            }
         }
     }
 
@@ -219,14 +249,17 @@ fn read_event() -> Option<(String, String, Option<serde_json::Value>)> {
 /// Longest transcript read for the context size; beyond it, none is given.
 const MAX_TRANSCRIPT: u64 = 64 * 1024 * 1024;
 
-/// The context the session's last answer used: its input tokens plus what it
-/// read from and wrote to the prompt cache, from the last usage line of the
-/// transcript (JSONL, one message per line).
-fn context_tokens(path: &std::path::Path) -> Option<u64> {
+/// The session's transcript (JSONL, one message per line), unless it is huge.
+fn read_transcript(path: &std::path::Path) -> Option<String> {
     if std::fs::metadata(path).ok()?.len() > MAX_TRANSCRIPT {
         return None;
     }
-    let text = std::fs::read_to_string(path).ok()?;
+    std::fs::read_to_string(path).ok()
+}
+
+/// The context the session's last answer used: its input tokens plus what it
+/// read from and wrote to the prompt cache, from the last usage line.
+fn context_tokens(text: &str) -> Option<u64> {
     text.lines().rev().find_map(|line| {
         if !line.contains("\"usage\"") {
             return None;
@@ -240,6 +273,97 @@ fn usage_context(usage: &serde_json::Value) -> Option<u64> {
     let n = |k: &str| usage.get(k).and_then(|v| v.as_u64()).unwrap_or(0);
     let total = n("input_tokens") + n("cache_read_input_tokens") + n("cache_creation_input_tokens");
     (total > 0).then_some(total)
+}
+
+/// API prices per million tokens: input, output, cache read. A cache write
+/// costs 1.25× input for five minutes, 2× for an hour. Matched by prefix, so
+/// dated ids (claude-haiku-4-5-20251001) find their model. With a Claude
+/// subscription nothing is billed per token: this is what the turn would have
+/// cost on the API.
+const PRICES: &[(&str, f64, f64, f64)] = &[
+    ("claude-fable-5-1", 10.0, 50.0, 0.25),
+    ("claude-mythos-5-1", 10.0, 50.0, 0.25),
+    ("claude-fable-5", 10.0, 50.0, 1.0),
+    ("claude-mythos-5", 10.0, 50.0, 1.0),
+    ("claude-opus-5-5", 4.0, 20.0, 0.20),
+    ("claude-opus-5", 5.0, 25.0, 0.50),
+    ("claude-opus-4-8", 5.0, 25.0, 0.50),
+    ("claude-opus-4-7", 5.0, 25.0, 0.50),
+    ("claude-opus-4-6", 5.0, 25.0, 0.50),
+    ("claude-sonnet-5-5", 2.0, 10.0, 0.20),
+    ("claude-sonnet-5", 2.0, 10.0, 0.20),
+    ("claude-sonnet-4-6", 3.0, 15.0, 0.30),
+    ("claude-haiku-4-5", 1.0, 5.0, 0.10),
+];
+
+fn price(model: &str) -> Option<(f64, f64, f64)> {
+    // Longest prefix first: claude-opus-5-5 before claude-opus-5.
+    PRICES
+        .iter()
+        .filter(|(id, ..)| model.starts_with(id))
+        .max_by_key(|(id, ..)| id.len())
+        .map(|&(_, i, o, r)| (i, o, r))
+}
+
+/// What the turn that just ended cost: every model call since the user's
+/// last prompt. Each answer is written once per content block, all with the
+/// same usage, so calls are counted by message id. None when a call came
+/// from a model with no known price, rather than a figure that is too low.
+fn turn_cost(text: &str) -> Option<f64> {
+    let mut seen = std::collections::HashSet::new();
+    let mut total = 0.0;
+    let mut calls = 0;
+    for line in text.lines().rev() {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+        let kind = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        if kind == "user" && is_prompt(&v) {
+            break;
+        }
+        if kind != "assistant" {
+            continue;
+        }
+        let Some(message) = v.get("message") else { continue };
+        let Some(usage) = message.get("usage") else { continue };
+        let id = message.get("id").and_then(|i| i.as_str()).unwrap_or("").to_string();
+        if !id.is_empty() && !seen.insert(id) {
+            continue;
+        }
+        let n = |k: &str| usage.get(k).and_then(|x| x.as_u64()).unwrap_or(0) as f64;
+        let input = n("input_tokens");
+        let output = n("output_tokens");
+        let read = n("cache_read_input_tokens");
+        let written = n("cache_creation_input_tokens");
+        if input + output + read + written == 0.0 {
+            continue; // a synthetic message: nothing was called
+        }
+        let model = message.get("model").and_then(|m| m.as_str()).unwrap_or("");
+        let (p_in, p_out, p_read) = price(model)?;
+        let split = usage.get("cache_creation");
+        let hour = split
+            .and_then(|c| c.get("ephemeral_1h_input_tokens"))
+            .and_then(|x| x.as_u64())
+            .unwrap_or(0) as f64;
+        let five = (written - hour).max(0.0);
+        total += (input * p_in + output * p_out + read * p_read + five * p_in * 1.25 + hour * p_in * 2.0) / 1e6;
+        calls += 1;
+    }
+    (calls > 0).then_some(total)
+}
+
+/// A line the user typed, not a tool result or a note Claude Code added.
+fn is_prompt(v: &serde_json::Value) -> bool {
+    if v.get("isMeta").and_then(|m| m.as_bool()).unwrap_or(false)
+        || v.get("isSidechain").and_then(|m| m.as_bool()).unwrap_or(false)
+    {
+        return false;
+    }
+    match v.get("message").and_then(|m| m.get("content")) {
+        Some(serde_json::Value::String(_)) => true,
+        Some(serde_json::Value::Array(blocks)) => {
+            !blocks.iter().any(|b| b.get("type").and_then(|t| t.as_str()) == Some("tool_result"))
+        }
+        _ => false,
+    }
 }
 
 /// Caps every string in the payload. A single Write can carry a whole file.
@@ -300,61 +424,80 @@ mod tests {
     #[test]
     fn decision_json_matches_the_documented_shape() {
         assert_eq!(
-            decision_json("allow", None).unwrap(),
+            decision_json("allow", None, false).unwrap(),
             r#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}"#
         );
         assert_eq!(
-            decision_json("deny", None).unwrap(),
+            decision_json("deny", None, false).unwrap(),
             r#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny","message":"Denied from Coucou"}}}"#
         );
         // "always" is an island concept; Claude Code just gets an allow.
-        assert!(decision_json("always", None).unwrap().contains(r#""behavior":"allow""#));
+        assert!(decision_json("always", None, false).unwrap().contains(r#""behavior":"allow""#));
     }
 
     #[test]
     fn questions_are_answered_with_the_requests_own_questions() {
         let questions = serde_json::json!([{ "question": "Colour?", "header": "C", "options": [{ "label": "Red" }, { "label": "Blue" }], "multiSelect": false }]);
-        let out = decision_json(r#"{"answers":{"Colour?":"Blue"}}"#, Some(&questions)).unwrap();
+        let out = decision_json(r#"{"answers":{"Colour?":"Blue"}}"#, Some(&questions), false).unwrap();
         let v: serde_json::Value = serde_json::from_str(&out).unwrap();
         assert_eq!(v["hookSpecificOutput"]["decision"]["behavior"], "allow");
         assert_eq!(v["hookSpecificOutput"]["decision"]["updatedInput"]["questions"], questions);
         assert_eq!(v["hookSpecificOutput"]["decision"]["updatedInput"]["answers"]["Colour?"], "Blue");
         // Multi-select answers are lists of labels.
-        assert!(decision_json(r#"{"answers":{"Colour?":["Red","Blue"]}}"#, Some(&questions)).is_some());
+        // Several answers: one string for Claude Code, a list for opencode.
+        let joined = decision_json(r#"{"answers":{"Colour?":["Red","Blue"]}}"#, Some(&questions), false).unwrap();
+        assert!(joined.contains(r#""answers":{"Colour?":"Red, Blue"}"#), "{joined}");
+        let listed = decision_json(r#"{"answers":{"Colour?":["Red","Blue"]}}"#, Some(&questions), true).unwrap();
+        assert!(listed.contains(r#""answers":{"Colour?":["Red","Blue"]}"#), "{listed}");
         // No questions in the request, empty or odd answers: silence.
-        assert!(decision_json(r#"{"answers":{"Colour?":"Blue"}}"#, None).is_none());
-        assert!(decision_json(r#"{"answers":{}}"#, Some(&questions)).is_none());
-        assert!(decision_json(r#"{"answers":{"Colour?":3}}"#, Some(&questions)).is_none());
+        assert!(decision_json(r#"{"answers":{"Colour?":"Blue"}}"#, None, false).is_none());
+        assert!(decision_json(r#"{"answers":{}}"#, Some(&questions), false).is_none());
+        assert!(decision_json(r#"{"answers":{"Colour?":3}}"#, Some(&questions), false).is_none());
     }
 
     #[test]
     fn anything_unrecognised_prints_nothing() {
-        assert!(decision_json("", None).is_none());
-        assert!(decision_json("maybe", None).is_none());
+        assert!(decision_json("", None, false).is_none());
+        assert!(decision_json("maybe", None, false).is_none());
         // The shape the app used to send must not be mistaken for a decision.
-        assert!(decision_json(r#"{"permissionDecision":"allow"}"#, None).is_none());
+        assert!(decision_json(r#"{"permissionDecision":"allow"}"#, None, false).is_none());
     }
 
     #[test]
     fn the_context_comes_from_the_last_answer() {
-        let dir = std::env::temp_dir().join(format!("coucou-hook-test-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("t.jsonl");
-        std::fs::write(
-            &path,
-            [
-                r#"{"type":"assistant","message":{"usage":{"input_tokens":10,"cache_read_input_tokens":1000,"output_tokens":5}}}"#,
-                r#"{"type":"user","message":{"content":"hi"}}"#,
-                r#"{"type":"assistant","message":{"usage":{"input_tokens":3,"cache_read_input_tokens":40000,"cache_creation_input_tokens":2000,"output_tokens":800}}}"#,
-                r#"{"type":"user","message":{"content":"next"}}"#,
-            ]
-            .join("\n"),
-        )
-        .unwrap();
-        assert_eq!(context_tokens(&path), Some(42003));
-        std::fs::write(&path, "not json\n").unwrap();
-        assert_eq!(context_tokens(&path), None);
-        std::fs::remove_dir_all(&dir).unwrap();
+        let text = [
+            r#"{"type":"assistant","message":{"usage":{"input_tokens":10,"cache_read_input_tokens":1000,"output_tokens":5}}}"#,
+            r#"{"type":"user","message":{"content":"hi"}}"#,
+            r#"{"type":"assistant","message":{"usage":{"input_tokens":3,"cache_read_input_tokens":40000,"cache_creation_input_tokens":2000,"output_tokens":800}}}"#,
+            r#"{"type":"user","message":{"content":"next"}}"#,
+        ]
+        .join("\n");
+        assert_eq!(context_tokens(&text), Some(42003));
+        assert_eq!(context_tokens("not json\n"), None);
+    }
+
+    #[test]
+    fn a_turn_costs_its_calls_once_each_since_the_prompt() {
+        let text = [
+            // The turn before: not counted.
+            r#"{"type":"assistant","message":{"id":"m0","model":"claude-opus-5-5","usage":{"input_tokens":1000000,"output_tokens":0}}}"#,
+            r#"{"type":"user","message":{"content":"do it"}}"#,
+            // One call written as two blocks, the same usage on each.
+            r#"{"type":"assistant","message":{"id":"m1","model":"claude-opus-5-5","usage":{"input_tokens":1000000,"output_tokens":100000}}}"#,
+            r#"{"type":"assistant","message":{"id":"m1","model":"claude-opus-5-5","usage":{"input_tokens":1000000,"output_tokens":100000}}}"#,
+            r#"{"type":"user","message":{"content":[{"type":"tool_result","content":"ok"}]}}"#,
+            // Cache: 1M read at $0.20, 1M written for an hour at 2 × $4.
+            r#"{"type":"assistant","message":{"id":"m2","model":"claude-opus-5-5","usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":1000000,"cache_creation_input_tokens":1000000,"cache_creation":{"ephemeral_1h_input_tokens":1000000}}}}"#,
+        ]
+        .join("\n");
+        let cost = turn_cost(&text).unwrap();
+        assert!((cost - (4.0 + 2.0 + 0.2 + 8.0)).abs() < 1e-9, "{cost}");
+        // A dated id finds its model; claude-opus-5 does not take Opus 5.5's price.
+        assert_eq!(price("claude-haiku-4-5-20251001"), Some((1.0, 5.0, 0.10)));
+        assert_eq!(price("claude-opus-5"), Some((5.0, 25.0, 0.50)));
+        // An unknown model gives no figure at all.
+        let unknown = r#"{"type":"assistant","message":{"id":"x","model":"gpt-9","usage":{"input_tokens":5}}}"#;
+        assert_eq!(turn_cost(unknown), None);
     }
 
     #[test]

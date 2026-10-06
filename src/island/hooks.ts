@@ -5,7 +5,7 @@
 
 import { Bridge, onEvent } from "../core/bridge";
 import { Sound } from "../core/sound";
-import { State, type AgentQuestion } from "../core/state";
+import { State, type AgentQuestion, type QueuedCard } from "../core/state";
 import type { Island } from "./island";
 
 const CLAUDE_ID = "integration_claude";
@@ -38,7 +38,81 @@ export async function showDeclaredAgents() {
 /** Clears the approval card if no decision was made before the hook gave up. */
 let pendingTimeout: number | null = null;
 
-interface HookPayload {
+/** What each session's current turn has done so far (session id → turn). */
+interface TurnRecord {
+  start: number;
+  files: string[];
+  /** The file the last edit is about, from PreToolUse: opencode's PostToolUse leaves it out. */
+  editing?: string;
+}
+const turns = new Map<string, TurnRecord>();
+/** opencode reports a session's cost so far; a turn's is the difference. */
+const sessionCost = new Map<string, number>();
+const EDIT_TOOLS: ReadonlySet<string> = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
+
+function editedFile(input: Record<string, unknown> | undefined): string {
+  const v = input?.file_path ?? input?.notebook_path ?? input?.path;
+  return typeof v === "string" ? v : "";
+}
+
+/** Keeps the turn's start, the files it changed and, at Stop, its summary. */
+function noteTurn(name: string, agentId: string, payload: HookPayload) {
+  const sid = payload.session_id ?? "";
+  if (!sid) return;
+  const tool = payload.tool_name ?? "";
+  switch (name) {
+    case "UserPromptSubmit":
+      turns.set(sid, { start: Date.now(), files: [] });
+      break;
+    case "PreToolUse":
+      if (EDIT_TOOLS.has(tool)) {
+        const rec = turns.get(sid) ?? { start: 0, files: [] };
+        rec.editing = editedFile(payload.tool_input);
+        turns.set(sid, rec);
+      }
+      break;
+    case "PostToolUse": {
+      if (!EDIT_TOOLS.has(tool)) break;
+      const rec = turns.get(sid) ?? { start: 0, files: [] };
+      const file = editedFile(payload.tool_input) || rec.editing || "";
+      if (file && !rec.files.includes(file)) rec.files.push(file);
+      rec.editing = undefined;
+      turns.set(sid, rec);
+      break;
+    }
+    case "Stop": {
+      const rec = turns.get(sid);
+      turns.delete(sid);
+      let cost: number | undefined;
+      let apiEquivalent = false;
+      if (typeof payload.turn_cost === "number" && Number.isFinite(payload.turn_cost)) {
+        cost = payload.turn_cost;
+        apiEquivalent = true;
+      } else if (typeof payload.cost === "number" && Number.isFinite(payload.cost)) {
+        const before = sessionCost.get(sid);
+        sessionCost.set(sid, payload.cost);
+        // Without the session's cost at the start of the turn, no figure.
+        if (before !== undefined) cost = Math.max(0, payload.cost - before);
+      }
+      const task = State.tasks.find((t) => t.id === agentId);
+      if (task) {
+        task.lastTurn = {
+          files: rec?.files ?? [],
+          ms: rec && rec.start > 0 ? Date.now() - rec.start : undefined,
+          cost,
+          apiEquivalent,
+        };
+      }
+      break;
+    }
+    case "SessionEnd":
+      turns.delete(sid);
+      sessionCost.delete(sid);
+      break;
+  }
+}
+
+export interface HookPayload {
   hook_event_name?: string;
   request_id?: string;
   session_id?: string;
@@ -55,6 +129,8 @@ interface HookPayload {
   /** On Stop: what the session has cost (opencode) and the context its last
    *  answer used (opencode's plugin; Claude Code's through the relay). */
   cost?: number;
+  /** On Stop, Claude Code: the turn's API price, worked out by the relay. */
+  turn_cost?: number;
   tokens?: number;
 }
 
@@ -185,11 +261,14 @@ function clearSession() {
 
 export function registerHookHandlers(island: Island) {
   void onEvent<HookPayload>("hook", (payload) => handleHook(island, payload));
+  void onEvent<string>("card-key", (accel) => cardKey(island, accel));
+  State.subscribe(syncCardKeys);
   // The relay went away while the card was up: the question was answered in
   // the terminal (or the agent quit), so the card has nothing left to decide.
   void onEvent<string>("approval-gone", (requestId) => {
     if (State.pendingApproval?.requestId === requestId) clearApproval(island, State.pendingApproval.agentId);
     if (State.pendingQuestion?.requestId === requestId) clearQuestion(island, State.pendingQuestion.agentId);
+    dropQueued(requestId, false);
   });
 }
 
@@ -220,6 +299,14 @@ function settledElsewhere(island: Island, name: string, payload: HookPayload) {
   if (q && q.sessionId === sid && (turnOver || (after && payload.tool_name === "AskUserQuestion"))) {
     void Bridge.approvalDecline(q.requestId);
     clearQuestion(island, q.agentId);
+  }
+  for (const c of [...State.cardQueue]) {
+    if (c.payload.session_id !== sid) continue;
+    const tool = c.payload.tool_name ?? "Tool";
+    const same = tool === "AskUserQuestion"
+      ? payload.tool_name === "AskUserQuestion"
+      : toolKey(payload.tool_name ?? "Tool", payload.tool_input) === toolKey(tool, c.payload.tool_input ?? {});
+    if (turnOver || (after && same)) dropQueued(c.requestId, true);
   }
 }
 
@@ -254,6 +341,7 @@ function clearQuestion(island: Island, agentId: string) {
   giveFocusBack();
   if (State.view === "question") island.setView(State.defaultView());
   State.notify();
+  showNextCard(island);
 }
 
 /**
@@ -334,6 +422,151 @@ function clearApproval(island: Island, agentId: string) {
   giveFocusBack();
   if (State.view === "approval") island.setView(State.defaultView());
   State.notify();
+  showNextCard(island);
+}
+
+// ── Card shortcuts ───────────────────────────────────────────────────────────
+// Super+Shift+Y allows, Super+Shift+N denies, Super+Shift+1…9 picks an answer
+// and Super+Shift+Return ends a several-answers question — from any window,
+// and only while the card is up: the GNOME extension grabs them for that time.
+
+const KEY_ALLOW = "<Super><Shift>y";
+const KEY_DENY = "<Super><Shift>n";
+const KEY_DONE = "<Super><Shift>Return";
+const keyForOption = (i: number) => `<Super><Shift>${i + 1}`;
+
+let grabbedKeys = "";
+
+/** Asks for exactly the shortcuts the card on screen can use. */
+function syncCardKeys() {
+  let keys: string[] = [];
+  const q = State.pendingQuestion;
+  if (State.pendingApproval) {
+    keys = [KEY_ALLOW, KEY_DENY];
+  } else if (q) {
+    const current = q.questions[q.index];
+    keys = current.options.slice(0, 9).map((_, i) => keyForOption(i));
+    if (current.multiSelect) keys.push(KEY_DONE);
+  }
+  const id = keys.join(" ");
+  if (id === grabbedKeys) return;
+  grabbedKeys = id;
+  void Bridge.setCardKeys(keys);
+}
+
+function cardKey(island: Island, accel: string) {
+  if (State.pendingApproval) {
+    if (accel === KEY_ALLOW) decideApproval(island, "allow");
+    else if (accel === KEY_DENY) decideApproval(island, "deny");
+    return;
+  }
+  const q = State.pendingQuestion;
+  if (!q) return;
+  const current = q.questions[q.index];
+  if (accel === KEY_DONE && current.multiSelect) {
+    answerQuestion(island, null);
+    return;
+  }
+  const option = current.options.findIndex((_, i) => keyForOption(i) === accel);
+  if (option >= 0) answerQuestion(island, current.options[option].label);
+}
+
+/** How long a relay waits for the island, from the moment it asked. */
+const RELAY_WAIT_MS = 108_000;
+
+/**
+ * Puts a request's card up: a question (Claude Code's AskUserQuestion,
+ * opencode's question tool) with its options as buttons, or a permission with
+ * Allow and Deny. False when there is nothing to show, and the request has
+ * gone back to the terminal.
+ */
+function presentCard(island: Island, card: QueuedCard): boolean {
+  const { requestId, agentId, payload } = card;
+  // A queued request has already spent part of its relay's wait.
+  const left = Math.max(5_000, RELAY_WAIT_MS - (Date.now() - card.arrivedAt));
+  if (pendingTimeout != null) window.clearTimeout(pendingTimeout);
+  pendingTimeout = null;
+  if (payload.tool_name === "AskUserQuestion") {
+    const questions = parseQuestions(payload.tool_input?.questions);
+    if (!questions) {
+      void Bridge.approvalDecline(requestId);
+      return false;
+    }
+    State.pendingQuestion = {
+      requestId, agentId, sessionId: payload.session_id ?? "", questions, index: 0, answers: {}, picked: [],
+    };
+    void Bridge.approvalAck(requestId);
+    State.updateTask(agentId, "question");
+    State.isPinned = true;
+    Sound.play("question");
+    takeFocus(agentId);
+    island.alert("question");
+    pendingTimeout = window.setTimeout(() => {
+      pendingTimeout = null;
+      if (State.pendingQuestion) clearQuestion(island, State.pendingQuestion.agentId);
+    }, left);
+    return true;
+  }
+  const tool = payload.tool_name ?? "Tool";
+  const input = payload.tool_input ?? {};
+  State.pendingApproval = {
+    requestId,
+    agentId,
+    sessionId: payload.session_id ?? "",
+    tool,
+    command: approvalTarget(tool, input),
+    toolKey: toolKey(tool, input),
+  };
+  // The relay's short ack window closes in 800 ms; everything below this
+  // line is synchronous, so the card really is up by the time it lands.
+  void Bridge.approvalAck(requestId);
+  State.updateTask(agentId, "approval");
+  State.isPinned = true;
+  Sound.play("approval");
+  takeFocus(agentId);
+  island.alert("approval");
+  // Coucou answers within the relay's wait or not at all; after that the
+  // terminal has taken over and the card would be lying.
+  pendingTimeout = window.setTimeout(() => {
+    pendingTimeout = null;
+    if (State.pendingApproval) clearApproval(island, State.pendingApproval.agentId);
+  }, left);
+  return true;
+}
+
+/** The next waiting request, once the card before it has gone. */
+function showNextCard(island: Island) {
+  while (!State.pendingApproval && !State.pendingQuestion) {
+    const next = State.cardQueue.shift();
+    if (!next) return;
+    if (Date.now() - next.arrivedAt > RELAY_WAIT_MS - 3_000) {
+      // Its relay is about to give up: the terminal has it.
+      void Bridge.approvalDecline(next.requestId);
+      continue;
+    }
+    if (!State.cardQueue.some((c) => c.agentId === next.agentId)) State.setPillBadge(next.agentId, null);
+    presentCard(island, next);
+  }
+}
+
+/** Takes a waiting request out of the queue (answered elsewhere, relay gone). */
+function dropQueued(requestId: string, decline: boolean) {
+  const i = State.cardQueue.findIndex((c) => c.requestId === requestId);
+  if (i < 0) return;
+  const [gone] = State.cardQueue.splice(i, 1);
+  if (decline) void Bridge.approvalDecline(requestId);
+  if (!State.cardQueue.some((c) => c.agentId === gone.agentId)) State.setPillBadge(gone.agentId, null);
+  State.notify();
+}
+
+/** Allow or Deny on the permission card, by click or by shortcut. */
+export function decideApproval(island: Island, decision: "allow" | "deny") {
+  const req = State.pendingApproval;
+  void Bridge.log(`decide ${decision} req=${req?.requestId ?? "none"}`);
+  if (!req) return;
+  Sound.play(decision === "deny" ? "blip" : "approve");
+  void Bridge.approvalDecision(req.requestId, decision);
+  clearApproval(island, req.agentId);
 }
 
 function handleHook(island: Island, payload: HookPayload) {
@@ -387,6 +620,7 @@ function handleHook(island: Island, payload: HookPayload) {
   };
 
   settledElsewhere(island, name, payload);
+  noteTurn(name, agentId, payload);
 
   switch (name) {
     case "SessionStart":
@@ -488,68 +722,19 @@ function handleHook(island: Island, payload: HookPayload) {
       }
 
       const requestId = payload.request_id ?? "";
-      // One card, one request. A second one must never quietly replace the first
-      // — that would leave a human staring at request B while request A waits for
-      // a decision nobody can give. Hand it straight back to the terminal.
-      const busy =
-        (State.pendingApproval && State.pendingApproval.requestId !== requestId) ||
-        (State.pendingQuestion && State.pendingQuestion.requestId !== requestId);
-      if (busy) {
-        if (requestId) void Bridge.approvalDecline(requestId);
-        break;
-      }
-
-      // A question (Claude Code's AskUserQuestion, opencode's question tool):
-      // its options become buttons, and the answer goes back through the relay.
-      if (payload.tool_name === "AskUserQuestion") {
-        const questions = parseQuestions(payload.tool_input?.questions);
-        if (!questions || !requestId) {
-          if (requestId) void Bridge.approvalDecline(requestId);
-          break;
-        }
-        ensurePill();
-        if (pendingTimeout != null) window.clearTimeout(pendingTimeout);
-        State.pendingQuestion = {
-          requestId, agentId, sessionId: payload.session_id ?? "", questions, index: 0, answers: {}, picked: [],
-        };
-        void Bridge.approvalAck(requestId);
-        State.updateTask(agentId, "question");
-        State.isPinned = true;
-        Sound.play("question");
-        takeFocus(agentId);
-        island.alert("question");
-        pendingTimeout = window.setTimeout(() => {
-          pendingTimeout = null;
-          if (State.pendingQuestion) clearQuestion(island, State.pendingQuestion.agentId);
-        }, 110_000);
-        break;
-      }
+      if (!requestId) break;
       ensurePill();
-      if (pendingTimeout != null) window.clearTimeout(pendingTimeout);
-      const tool = payload.tool_name ?? "Tool";
-      const input = payload.tool_input ?? {};
-      State.pendingApproval = {
-        requestId,
-        agentId,
-        sessionId: payload.session_id ?? "",
-        tool,
-        command: approvalTarget(tool, input),
-        toolKey: toolKey(tool, input),
-      };
-      // The relay's short ack window closes in 800 ms; everything below this
-      // line is synchronous, so the card really is up by the time it lands.
-      if (requestId) void Bridge.approvalAck(requestId);
-      State.updateTask(agentId, "approval");
-      State.isPinned = true;
-      Sound.play("approval");
-      takeFocus(agentId);
-      island.alert("approval");
-      // Coucou answers within 108 s or not at all; after that the terminal has
-      // taken over and the card would be lying.
-      pendingTimeout = window.setTimeout(() => {
-        pendingTimeout = null;
-        if (State.pendingApproval) clearApproval(island, State.pendingApproval.agentId);
-      }, 110_000);
+      // One card on screen at a time. Another request waits its turn behind it
+      // — acknowledged, so its relay keeps waiting for a human — and shows as
+      // soon as the card before it goes.
+      if (State.pendingApproval || State.pendingQuestion) {
+        State.cardQueue.push({ requestId, agentId, payload, arrivedAt: Date.now() });
+        void Bridge.approvalAck(requestId);
+        State.setPillBadge(agentId, "approval");
+        Sound.play("blip");
+        break;
+      }
+      presentCard(island, { requestId, agentId, payload, arrivedAt: Date.now() });
       break;
     }
 

@@ -23,6 +23,20 @@ export interface AgentTask {
   sessionPids?: number[] | null;
   /** Every live session of this agent, most recent first. */
   sessions?: AgentSession[];
+  /** What the turn that just ended did, for the finished card. */
+  lastTurn?: TurnSummary | null;
+}
+
+/** One turn of a session, from the prompt to Stop. */
+export interface TurnSummary {
+  /** Files edited or written, in order, without repeats. */
+  files: string[];
+  /** Prompt to Stop, when Coucou saw the prompt. */
+  ms?: number;
+  /** USD. Claude Code: what the turn would cost on the API. opencode: billed. */
+  cost?: number;
+  /** The cost is the API price of a turn run on a subscription. */
+  apiEquivalent?: boolean;
 }
 
 /** One session of an agent: one terminal, one project. */
@@ -71,6 +85,20 @@ export interface QuestionInfo {
   answers: Record<string, string | string[]>;
   /** Labels ticked so far on a question that takes several. */
   picked: string[];
+}
+
+/** A permission request or question waiting behind the card on screen. */
+export interface QueuedCard {
+  requestId: string;
+  agentId: string;
+  /** The hook payload as it came: the card is built from it when its turn comes. */
+  payload: {
+    session_id?: string;
+    tool_name?: string;
+    tool_input?: Record<string, unknown>;
+  };
+  /** Date.now() when the request came in: its relay's wait started then. */
+  arrivedAt: number;
 }
 
 export interface ChatMessage {
@@ -147,6 +175,8 @@ export interface Settings {
   chatIdleMinutes: number;
   /** Owned by Rust: the conversation "Continue last chat" picks up. */
   lastChatSession: string | null;
+  /** Look for a newer release on GitHub every few hours (packaged installs). */
+  autoUpdate: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -166,6 +196,7 @@ export const DEFAULT_SETTINGS: Settings = {
   opencodeModel: "",
   chatIdleMinutes: 30,
   lastChatSession: null,
+  autoUpdate: true,
 };
 
 type Listener = () => void;
@@ -198,6 +229,10 @@ class AppState {
   chatHistory: ChatMessage[] = [];
   pendingApproval: ApprovalInfo | null = null;
   pendingQuestion: QuestionInfo | null = null;
+  /** Pixels the question card needs beyond its usual height (wrapped answers). */
+  questionExtra = 0;
+  /** Requests waiting behind the card on screen, oldest first. */
+  cardQueue: QueuedCard[] = [];
 
   integrations: Record<string, IntegrationInfo> = {};
 

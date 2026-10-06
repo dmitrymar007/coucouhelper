@@ -41,6 +41,17 @@ const BUTTONS =
     Clutter.ModifierType.BUTTON2_MASK |
     Clutter.ModifierType.BUTTON3_MASK;
 
+/**
+ * The only shortcuts the app may have grabbed, and only while a card is up:
+ * Super+Shift+Y allows, Super+Shift+N denies, Super+Shift+1…9 picks an answer,
+ * Super+Shift+Return ends a several-answers question. (Super+N and Super+1…9
+ * alone already belong to GNOME and the dock.)
+ */
+const CARD_KEYS = new Set([
+    '<Super><Shift>y', '<Super><Shift>n', '<Super><Shift>Return',
+    ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => `<Super><Shift>${n}`),
+]);
+
 /** Coucou's executable is called this in every build — necessary, never enough. */
 const APP_EXECUTABLE = 'coucou';
 
@@ -90,6 +101,12 @@ const iface = (extraMethods = '') => `<node>
       <arg type="s" name="title" direction="out"/>
     </method>
     <property name="Protocol" type="u" access="read"/>
+    <method name="SetCardKeys">
+      <arg type="as" name="accelerators" direction="in"/>
+    </method>
+    <signal name="CardKey">
+      <arg type="s" name="accelerator"/>
+    </signal>
     <signal name="Pointer">
       <arg type="d" name="x"/>
       <arg type="d" name="y"/>
@@ -330,6 +347,9 @@ class Island {
         this._title = title;
         this._placement = 'primary';
         this._focusable = false;
+        /** Grabbed card shortcuts: Mutter action → accelerator. */
+        this._cardKeys = new Map();
+        this._cardKeySignal = 0;
         this._window = null;
         this._windowSignals = [];
         this._pointerSource = 0;
@@ -476,6 +496,45 @@ class Island {
     setPlacement(screen) {
         this._placement = screen === 'cursor' ? 'cursor' : 'primary';
         this._place();
+    }
+
+    /**
+     * Grabs the card shortcuts the app asks for (none: lets them all go). A
+     * press is reported to the app only; nothing reaches the focused window.
+     */
+    setCardKeys(accelerators) {
+        this._releaseCardKeys();
+        for (const accel of accelerators) {
+            if (!CARD_KEYS.has(accel))
+                continue;
+            const action = global.display.grab_accelerator(accel, Meta.KeyBindingFlags.NONE);
+            if (action === Meta.KeyBindingAction.NONE) {
+                log(`coucou: ${accel} is taken`);
+                continue;
+            }
+            Main.wm.allowKeybinding(Meta.external_binding_name_for_action(action), Shell.ActionMode.ALL);
+            this._cardKeys.set(action, accel);
+        }
+        if (this._cardKeys.size && !this._cardKeySignal) {
+            this._cardKeySignal = global.display.connect('accelerator-activated', (_display, action) => {
+                const accel = this._cardKeys.get(action);
+                if (accel)
+                    Gio.DBus.session.emit_signal(this._sender, OBJECT_PATH, IFACE_NAME, 'CardKey',
+                        new GLib.Variant('(s)', [accel]));
+            });
+        }
+    }
+
+    _releaseCardKeys() {
+        for (const action of this._cardKeys.keys()) {
+            Main.wm.allowKeybinding(Meta.external_binding_name_for_action(action), Shell.ActionMode.NONE);
+            global.display.ungrab_accelerator(action);
+        }
+        this._cardKeys.clear();
+        if (this._cardKeySignal) {
+            global.display.disconnect(this._cardKeySignal);
+            this._cardKeySignal = 0;
+        }
     }
 
     /** The keyboard goes to the island only while the app asks (the chat). */
@@ -653,6 +712,7 @@ class Island {
 
     destroy() {
         this.setTracking(false);
+        this._releaseCardKeys();
         if (this._placeSource)
             GLib.source_remove(this._placeSource);
         Gio.bus_unwatch_name(this._watch);
@@ -764,6 +824,11 @@ export default class CoucouIslandExtension extends Extension {
 
     SetFocusableAsync([on], invocation) {
         this._ownedBy(invocation)?.setFocusable(on);
+        invocation.return_value(null);
+    }
+
+    SetCardKeysAsync([accelerators], invocation) {
+        this._ownedBy(invocation)?.setCardKeys(accelerators);
         invocation.return_value(null);
     }
 

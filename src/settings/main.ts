@@ -3,7 +3,9 @@
 // integrations land here too in a later stage.
 
 import "./settings.css";
-import { Bridge, onEvent, type HookStatus, type OpencodePluginStatus, type ShellExtensionStatus } from "../core/bridge";
+import {
+  Bridge, onEvent, type HookStatus, type OpencodePluginStatus, type ShellExtensionStatus, type UpdateStatus,
+} from "../core/bridge";
 import { DEFAULT_SETTINGS, type Settings } from "../core/state";
 import { API_MODELS, CLI_MODELS } from "../core/models";
 import { h, clear } from "../views/dom";
@@ -722,6 +724,77 @@ function integrationsSection(present: Record<string, boolean>): HTMLElement {
   return h("section", {}, h("h2", {}, h("span", { text: "Integrations" })), note, list);
 }
 
+// ── Updates section ───────────────────────────────────────────────────────────
+
+/** Coucou's own updates: what is installed, what is out, and the one click to update. */
+function updatesSection(initial: UpdateStatus): HTMLElement {
+  const dot = statusDot(!initial.available);
+  const state = h("div", { class: "hint" });
+  const installBtn = h("button", { class: "primary" }) as HTMLButtonElement;
+  const checkBtn = h("button", { text: "Check now" }) as HTMLButtonElement;
+  const feedback = h("div", {});
+
+  function draw(st: UpdateStatus) {
+    dot.style.background = st.available ? "#f7b32b" : "#22c55e";
+    if (st.installing) {
+      state.textContent = `Installing ${st.latest}… Enter your password when GNOME asks; Coucou then starts again.`;
+    } else if (st.available) {
+      state.textContent = `Coucou ${st.latest} is out (you have ${st.current}).`;
+    } else if (st.checking) {
+      state.textContent = "Checking…";
+    } else if (st.latest) {
+      const when = st.checkedAt ? new Date(st.checkedAt * 1000).toLocaleString() : "";
+      state.textContent = `Coucou ${st.current} is the latest version.${when ? ` Checked ${when}.` : ""}`;
+    } else {
+      state.textContent = `Coucou ${st.current}. Not checked yet.`;
+    }
+    installBtn.textContent = `Update to ${st.latest ?? ""}`;
+    installBtn.style.display = st.available ? "" : "none";
+    installBtn.disabled = st.installing;
+    checkBtn.disabled = st.checking || st.installing;
+    clear(feedback);
+    if (st.error) feedback.append(h("div", { class: "notice err", text: st.error }));
+  }
+
+  installBtn.addEventListener("click", async () => {
+    try {
+      await Bridge.updateInstall();
+    } catch (err) {
+      clear(feedback);
+      feedback.append(h("div", { class: "notice err", text: String(err) }));
+    }
+  });
+  checkBtn.addEventListener("click", async () => {
+    try {
+      draw(await Bridge.updateCheck());
+    } catch {
+      // The status event carries the error.
+    }
+  });
+  void onEvent<UpdateStatus>("update-status", draw);
+
+  draw(initial);
+  return h(
+    "section",
+    {},
+    h("h2", {}, dot, h("span", { text: "Updates" })),
+    state,
+    h("div", { class: "row" }, installBtn, checkBtn),
+    h("div", { class: "row" },
+      h("label", { text: "Check for updates automatically" }),
+      toggle(settings.autoUpdate, (v) => { settings.autoUpdate = v; void save(); }),
+    ),
+    h("div", {
+      class: "hint",
+      text:
+        "Coucou asks GitHub for its latest release every few hours — that request is all it sends. " +
+        "Updating downloads the package, checks it against the release's checksums and installs it with apt; " +
+        "GNOME asks for your password.",
+    }),
+    feedback,
+  );
+}
+
 // ── General section ───────────────────────────────────────────────────────────
 
 function generalSection(): HTMLElement {
@@ -796,6 +869,7 @@ async function main() {
   const hasKey = (await Bridge.secretPresent("anthropic-api-key")) ?? false;
   const shell = await Bridge.shellExtensionStatus();
   const opencodePlugin = await Bridge.opencodePluginStatus();
+  const updates = await Bridge.updateStatus();
 
   const keys = [
     "stripe-api-key", "github-token", "vercel-token",
@@ -814,9 +888,10 @@ async function main() {
     apiSection(hasKey),
     integrationsSection(present),
     generalSection(),
+    ...(updates?.applicable ? [updatesSection(updates)] : []),
     h("div", {
       class: "hint",
-      text: "No telemetry. Network requests only go to the services you configure yourself.",
+      text: "No telemetry. Network requests only go to the services you configure yourself, and to GitHub for updates.",
     }),
   );
 

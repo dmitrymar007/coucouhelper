@@ -19,7 +19,7 @@ import { USC, UploadSeq, uploadProgressCurve } from "../upload/sequence";
 import { buildHeader, buildViews, type ViewActions, type ViewHost } from "../views/views";
 import { h } from "../views/dom";
 import { IslandStateMachine } from "./fsm";
-import { answerQuestion, questionToTerminal } from "./hooks";
+import { answerQuestion, decideApproval, questionToTerminal } from "./hooks";
 
 const BOT_OVERHANG = 40;
 /** Mochi's canvas, CSS px: room for the biggest Mochi (confused, 110) and a spring's overshoot. */
@@ -175,21 +175,10 @@ export class Island {
       openUrl: (url) => {
         if (url) void Bridge.openUrl(url);
       },
-      decide: (d) => {
-        const req = State.pendingApproval;
-        void Bridge.log(`decide ${d} req=${req?.requestId ?? "none"}`);
-        if (!req) return;
-        Sound.play(d === "deny" ? "blip" : "approve");
-        void Bridge.approvalDecision(req.requestId, d);
-        State.pendingApproval = null;
-        State.isPinned = false;
-        this.fsm.pinned = false;
-        State.updateTask(req.agentId, "working");
-        State.setPillBadge(req.agentId, null);
-        this.setView(State.defaultView());
-      },
+      decide: (d) => decideApproval(this, d),
       answer: (label) => answerQuestion(this, label),
       questionToTerminal: () => questionToTerminal(this),
+      refit: () => this.animateGeometry(false),
       toggleSound: () => {
         State.settings.soundEnabled = !State.settings.soundEnabled;
         Sound.setEnabled(State.settings.soundEnabled);
@@ -506,7 +495,7 @@ export class Island {
   // ── Geometry ────────────────────────────────────────────────────────────────
 
   private targetSize(): { w: number; h: number; r: number } {
-    const { w, h } = islandSize(State.mode, State.view, State.chatHistory.length);
+    const { w, h } = islandSize(State.mode, State.view, State.chatHistory.length, State.questionExtra);
     const r = State.mode === "expanded" ? EXPANDED_CORNER : ROUNDED_CORNER;
     return { w, h, r };
   }

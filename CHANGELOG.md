@@ -2,6 +2,15 @@
 
 Coucou for Linux.
 
+## 0.2.4 — October 6, 2026
+
+- Updates: a packaged Coucou checks GitHub for a newer release every few hours (Settings → Updates; it can be turned off). The island says so once, and the tray's **Update to …** or Settings installs it — the package is checked against the release's SHA256SUMS, apt installs it after GNOME asks for your password, and Coucou starts again.
+- Keyboard: Super+Shift+Y allows and Super+Shift+N denies the request on the card, Super+Shift+1…9 picks an answer and Super+Shift+Enter ends a several-answers question — from any window, only while a card is up (needs the updated GNOME extension: log out and back in once).
+- Several requests at once wait in line instead of going back to the terminal: the card says how many more are waiting, and the next one comes up as soon as the first is answered.
+- When an agent finishes, its card says what the turn did: the files it changed (or how many, when there are more than three), how long it took and what it cost — opencode's real cost, and for Claude Code what it would cost on the API (≈).
+- Fixed: an answer with several choices given on the island never reached Claude Code (it takes them as one string, not a list). Long or many answers no longer push Done and In terminal off the question card: the card grows to fit them.
+- A packaged Coucou removes an older copy of its GNOME extension from ~/.local, which would otherwise keep running instead of the package's.
+
 ## 0.2.3 — October 6, 2026
 
 - GNOME: with the island folded, the middle of the top of the screen could stop taking clicks until the island was opened again. GTK put the island window's click area back to the whole window whenever it re-laid it out (switching windows can cause that); the island's own area is now one GTK keeps.

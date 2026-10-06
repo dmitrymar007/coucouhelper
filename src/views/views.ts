@@ -6,7 +6,7 @@ import { h, svg, clear, dot } from "./dom";
 import { Bridge } from "../core/bridge";
 import { ICONS } from "./icons";
 import { Ticker } from "./ticker";
-import { State, type AgentTask } from "../core/state";
+import { State, type AgentTask, type TurnSummary } from "../core/state";
 import { washRGBA, type IslandViewName, type Wash } from "../core/layout";
 import { createMiniBot, pruneMiniBots } from "../mochi/minibots";
 import { buildPrompt } from "./chat";
@@ -16,6 +16,8 @@ import { renderIntegrationCard, type IntegrationCardHooks } from "./integrations
 
 export interface ViewActions {
   setView(v: IslandViewName): void;
+  /** The view's content changed height: size the island to it again. */
+  refit(): void;
   collapse(): void;
   setFocus(id: string): void;
   openTerminal(): void;
@@ -392,6 +394,12 @@ function buildEmpty(actions: ViewActions): ViewHost {
 
 // ── Approval ──────────────────────────────────────────────────────────────────
 
+/** " · 2 more waiting" while other requests queue behind the card. */
+function waitingNote(): string {
+  const n = State.cardQueue.length;
+  return n > 0 ? ` · ${n} more waiting` : "";
+}
+
 function buildApproval(actions: ViewActions): ViewHost {
   const who = h("div");
   const code = h("div", { class: "code" });
@@ -402,7 +410,7 @@ function buildApproval(actions: ViewActions): ViewHost {
     el,
     sync() {
       clear(who);
-      who.append(agentWho(State.focusTask, "needs permission"));
+      who.append(agentWho(State.focusTask, `needs permission${waitingNote()}`));
       // The whole point of approving here rather than in the terminal: this line
       // is the command, the file path or the URL being authorised, not just the
       // name of the tool asking.
@@ -435,7 +443,7 @@ function buildQuestion(actions: ViewActions): ViewHost {
     sync() {
       const q = State.pendingQuestion;
       clear(who);
-      who.append(agentWho(State.focusTask, "is asking"));
+      who.append(agentWho(State.focusTask, `is asking${waitingNote()}`));
       if (!q) {
         // A question noticed in a notification only: it is answered there.
         head.textContent = "";
@@ -454,17 +462,30 @@ function buildQuestion(actions: ViewActions): ViewHost {
       // Rebuilt only when what it shows changes: rebuilding between a mouse
       // down and up would swallow the click.
       const key = `${q.requestId}:${q.index}:${q.picked.join("|")}`;
-      if (key === rowKey) return;
-      rowKey = key;
-      clear(row);
-      for (const o of current.options) {
-        const on = q.picked.includes(o.label);
-        const b = btn(o.label.slice(0, 32), current.multiSelect && !on ? "secondary" : "primary", () => actions.answer(o.label));
-        if (o.description) b.title = o.description;
-        row.append(b);
+      if (key !== rowKey) {
+        rowKey = key;
+        clear(row);
+        current.options.forEach((o, i) => {
+          const on = q.picked.includes(o.label);
+          // The digit is Super+Shift+<digit>, as Y and N are on the permission card.
+          const key = i < 9 ? String(i + 1) : undefined;
+          const b = btn(o.label.slice(0, 32), current.multiSelect && !on ? "secondary" : "primary", () => actions.answer(o.label), key);
+          if (o.description) b.title = o.description;
+          row.append(b);
+        });
+        if (current.multiSelect) row.append(btn("Done", "secondary", () => actions.answer(null)));
+        row.append(btn("In terminal", "secondary", () => actions.questionToTerminal()));
       }
-      if (current.multiSelect) row.append(btn("Done", "secondary", () => actions.answer(null)));
-      row.append(btn("In terminal", "secondary", () => actions.questionToTerminal()));
+      // Long or many answers wrap to more rows: the card grows to show them
+      // all — Done and In terminal included — instead of clipping them.
+      // Measured on every sync: while the card is not on screen it has no size.
+      const first = row.firstElementChild as HTMLElement | null;
+      if (!first || first.offsetHeight === 0) return;
+      const extra = Math.min(120, Math.max(0, row.scrollHeight - first.offsetHeight));
+      if (extra !== State.questionExtra) {
+        State.questionExtra = extra;
+        actions.refit();
+      }
     },
   };
 }
@@ -498,20 +519,49 @@ function buildError(actions: ViewActions): ViewHost {
 
 // ── Finished ──────────────────────────────────────────────────────────────────
 
+/** "Edited a.ts, b.ts · 2 min 14 s · ≈$0.42": names while they fit, else a count. */
+export function turnSummary(turn: TurnSummary | null | undefined): string {
+  if (!turn) return "";
+  const parts: string[] = [];
+  const names = turn.files.map((f) => f.split("/").pop() || f);
+  if (names.length > 0) {
+    const list = names.join(", ");
+    parts.push(names.length <= 3 && list.length <= 40 ? `Edited ${list}` : `Edited ${names.length} files`);
+  }
+  if (turn.ms !== undefined) {
+    const s = Math.max(1, Math.round(turn.ms / 1000));
+    if (s < 60) parts.push(`${s} s`);
+    else if (s < 3600) parts.push(`${Math.floor(s / 60)} min ${s % 60} s`);
+    else parts.push(`${Math.floor(s / 3600)} h ${String(Math.floor((s % 3600) / 60)).padStart(2, "0")} min`);
+  }
+  if (turn.cost !== undefined) {
+    const money = turn.cost < 0.01 ? "<$0.01" : `$${turn.cost.toFixed(2)}`;
+    parts.push(turn.apiEquivalent ? `≈${money}` : money);
+  }
+  return parts.join(" · ");
+}
+
 function buildFinished(actions: ViewActions): ViewHost {
   const who = h("div");
   const title = h("div", { class: "title" });
+  const detail = h("div", { class: "detail" });
   const row = h("div", { class: "actions" },
     btn("Open terminal", "primary", () => actions.openTerminal()),
     btn("OK", "secondary", () => actions.collapse()),
   );
-  const el = h("div", { class: "view" }, card("green", stack(116, 16, who, title, row)));
+  const el = h("div", { class: "view" }, card("green", stack(116, 16, who, title, detail, row)));
   return {
     el,
     sync() {
       clear(who);
       who.append(agentWho(State.focusTask, "finished"));
       title.textContent = State.focusTask?.steps.at(-1) ?? "Session finished";
+      const turn = State.focusTask?.lastTurn;
+      detail.textContent = turnSummary(turn);
+      detail.style.display = detail.textContent ? "" : "none";
+      detail.title = turn?.apiEquivalent
+        ? "≈ what this turn would cost on the API; a Claude subscription bills nothing per token"
+        : "";
     },
   };
 }

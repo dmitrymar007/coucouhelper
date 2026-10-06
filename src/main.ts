@@ -37,6 +37,17 @@ async function main() {
     }, 9000);
   }
 
+  // A newer Coucou: said once per run on the island; installing is a click in
+  // the tray or in Settings → Updates.
+  await onEvent<string>("update-available", (version) => {
+    State.noteMessage = `Coucou ${version} is out. Install it from the tray (Update to ${version}…) or Settings → Updates.`;
+    island.alert("note");
+  });
+  await onEvent<null>("update-none", () => {
+    State.noteMessage = "Coucou is up to date.";
+    island.alert("note");
+  });
+
   await onEvent<{ x: number; y: number }>("cursor", ({ x, y }) => island.onCursor(x, y));
   await onEvent<{ x: number; y: number }>("cursor-far", ({ x, y }) => island.onFarCursor(x, y));
   await onEvent<null>("press-outside", () => island.pressOutside());
