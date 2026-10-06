@@ -27,6 +27,8 @@ interface Row {
   shimmer: HTMLElement;
   dim: HTMLElement;
   text: string;
+  /** The whole command or path behind `text`. */
+  full: string;
 }
 
 function makeRow(): Row {
@@ -46,10 +48,12 @@ function makeRow(): Row {
     h("span", { class: "tick-icon", style: "position:relative" }, chevron, check),
     h("span", { style: "position:relative;flex:1 1 auto;min-width:0" }, shimmer, dim),
   );
-  return { el, chevron, check, shimmer, dim, text: "" };
+  return { el, chevron, check, shimmer, dim, text: "", full: "" };
 }
 
-function setText(row: Row, text: string) {
+function setText(row: Row, text: string, full = text) {
+  row.full = full;
+  row.el.title = full;
   if (row.text === text) return;
   row.text = text;
   row.shimmer.textContent = text;
@@ -75,13 +79,29 @@ export class Ticker {
   private a = makeRow(); // completed
   private b = makeRow(); // current
   private c = makeRow(); // incoming
-  private queue: string[] = [];
+  private queue: { text: string; full: string }[] = [];
   private startMs: number | null = null;
   private displayIndex = -1;
+  /** The current step in full, over the rows, after a click. */
+  private expanded = h("div", { class: "ticker-full" });
 
   constructor() {
-    this.el = h("div", { class: "ticker" }, this.a.el, this.b.el, this.c.el);
+    this.el = h("div", { class: "ticker" }, this.a.el, this.b.el, this.c.el, this.expanded);
+    // A click shows the current step's whole command on up to three lines;
+    // another click, or the next step, folds it back.
+    this.el.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (this.el.classList.contains("open")) this.fold();
+      else if (this.b.full) {
+        this.expanded.textContent = this.b.full;
+        this.el.classList.add("open");
+      }
+    });
     this.rest();
+  }
+
+  private fold() {
+    this.el.classList.remove("open");
   }
 
   /** The state between transitions: completed on top, current below. */
@@ -97,13 +117,15 @@ export class Ticker {
 
   sync(task: AgentTask | null) {
     const steps = task && task.steps.length > 0 ? task.steps : ["…"];
+    const fulls = task?.stepFull?.length === steps.length ? task.stepFull : steps;
+    const at = (i: number) => ({ text: steps[i], full: fulls[i] });
     const idx = task ? Math.min(task.stepIndex, steps.length - 1) : -1;
 
     // First render: drop straight into place, no animation.
     if (this.displayIndex < 0) {
       this.displayIndex = idx;
-      setText(this.a, idx > 0 ? steps[idx - 1] : "…");
-      setText(this.b, steps[Math.max(idx, 0)]);
+      setText(this.a, idx > 0 ? steps[idx - 1] : "…", idx > 0 ? fulls[idx - 1] : "");
+      setText(this.b, steps[Math.max(idx, 0)], fulls[Math.max(idx, 0)]);
       this.rest();
       return;
     }
@@ -113,13 +135,14 @@ export class Ticker {
       this.queue = [];
       this.startMs = null;
       this.displayIndex = idx;
-      setText(this.a, idx > 0 ? steps[idx - 1] : "…");
-      setText(this.b, steps[Math.max(idx, 0)]);
+      this.fold();
+      setText(this.a, idx > 0 ? steps[idx - 1] : "…", idx > 0 ? fulls[idx - 1] : "");
+      setText(this.b, steps[Math.max(idx, 0)], fulls[Math.max(idx, 0)]);
       this.rest();
       return;
     }
 
-    for (let i = this.displayIndex + 1; i <= idx; i++) this.queue.push(steps[i]);
+    for (let i = this.displayIndex + 1; i <= idx; i++) this.queue.push(at(i));
     this.displayIndex = idx;
     if (this.queue.length > MAX_QUEUE) {
       this.queue = this.queue.slice(-MAX_QUEUE);
@@ -130,7 +153,7 @@ export class Ticker {
   tick(nowMs: number) {
     if (this.startMs == null) {
       if (this.queue.length === 0) return;
-      setText(this.c, this.queue[0]);
+      setText(this.c, this.queue[0].text, this.queue[0].full);
       place(this.c, ROW_H * 2, 0, 0);
       this.startMs = nowMs;
     }
@@ -147,8 +170,9 @@ export class Ticker {
 
     // Commit: the current row becomes the completed one, the incoming row the
     // current one. Texts move, elements stay put — no reordering, no overlap.
-    setText(this.a, this.b.text);
-    setText(this.b, this.c.text);
+    setText(this.a, this.b.text, this.b.full);
+    setText(this.b, this.c.text, this.c.full);
+    this.fold();
     this.queue.shift();
     this.startMs = null;
     this.rest();

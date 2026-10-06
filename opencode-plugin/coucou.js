@@ -90,7 +90,7 @@ function permissionTarget(p) {
   const patterns = Array.isArray(p.patterns) ? p.patterns.join(", ") : "";
   switch (p.permission) {
     case "bash":
-      return { tool_name: "Bash", tool_input: { command: meta.command ?? patterns } };
+      return { tool_name: "Bash", tool_input: { command: meta.command ?? patterns, description: meta.description ?? "" } };
     case "edit":
     case "write":
       return { tool_name: toolName(p.permission), tool_input: { file_path: meta.filepath ?? meta.filePath ?? patterns } };

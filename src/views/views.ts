@@ -402,32 +402,51 @@ function waitingNote(): string {
 
 function buildApproval(actions: ViewActions): ViewHost {
   const who = h("div");
-  const code = h("div", { class: "code" });
+  const desc = h("div", { class: "sub approval-desc" });
+  const code = h("div", { class: "code wrap" });
   const row = h("div", { class: "actions" });
-  const el = h("div", { class: "view" }, card("amber", stack(116, 16, who, code, row)));
+  const el = h("div", { class: "view" }, card("amber", stack(116, 16, who, desc, code, row)));
   let rowKey = "";
   return {
     el,
     sync() {
       clear(who);
       who.append(agentWho(State.focusTask, `needs permission${waitingNote()}`));
+      // What the agent says the command is for, then the command itself.
+      const about = State.pendingApproval?.description ?? "";
+      desc.textContent = about;
+      desc.style.display = about ? "" : "none";
       // The whole point of approving here rather than in the terminal: this line
       // is the command, the file path or the URL being authorised, not just the
-      // name of the tool asking.
-      code.textContent = State.pendingApproval?.command || State.pendingApproval?.tool || "…";
+      // name of the tool asking. Up to three lines; all of it on hover.
+      const target = State.pendingApproval?.command || State.pendingApproval?.tool || "…";
+      code.textContent = target;
+      code.title = target;
       // Two buttons, built once. Rebuilding them between a mouse-down and a
       // mouse-up would swallow the click, and there is nothing left to vary:
       // "Always" is gone until the remembered-rules list exists to back it.
-      if (rowKey === "built") return;
-      rowKey = "built";
-      clear(row);
-      row.append(
-        btn("Deny", "secondary", () => actions.decide("deny"), "N"),
-        btn("Allow", "primary", () => actions.decide("allow"), "Y"),
-      );
+      if (rowKey !== "built") {
+        rowKey = "built";
+        clear(row);
+        row.append(
+          btn("Deny", "secondary", () => actions.decide("deny"), "N"),
+          btn("Allow", "primary", () => actions.decide("allow"), "Y"),
+        );
+      }
+      // A long command wraps and the card grows to show it, as the question
+      // card does for its answers. Measured only while on screen.
+      if (State.view !== "approval" || code.offsetHeight === 0) return;
+      const extra = Math.min(80, Math.max(0, code.offsetHeight - CODE_LINE_H) + (about ? desc.offsetHeight + 5 : 0));
+      if (extra !== State.cardExtra) {
+        State.cardExtra = extra;
+        actions.refit();
+      }
     },
   };
 }
+
+/** A one-line `.code.wrap`: 16px line, 5px padding top and bottom, 1px borders. */
+const CODE_LINE_H = 28;
 
 // ── Question ──────────────────────────────────────────────────────────────────
 
@@ -480,10 +499,10 @@ function buildQuestion(actions: ViewActions): ViewHost {
       // all — Done and In terminal included — instead of clipping them.
       // Measured on every sync: while the card is not on screen it has no size.
       const first = row.firstElementChild as HTMLElement | null;
-      if (!first || first.offsetHeight === 0) return;
+      if (State.view !== "question" || !first || first.offsetHeight === 0) return;
       const extra = Math.min(120, Math.max(0, row.scrollHeight - first.offsetHeight));
-      if (extra !== State.questionExtra) {
-        State.questionExtra = extra;
+      if (extra !== State.cardExtra) {
+        State.cardExtra = extra;
         actions.refit();
       }
     },

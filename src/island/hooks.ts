@@ -7,6 +7,7 @@ import { Bridge, onEvent } from "../core/bridge";
 import { Sound } from "../core/sound";
 import { State, type AgentQuestion, type QueuedCard } from "../core/state";
 import type { Island } from "./island";
+import { stepFor } from "./steps";
 
 const CLAUDE_ID = "integration_claude";
 
@@ -159,47 +160,6 @@ function lastPathComponent(p: string): string {
   const cleaned = p.replace(/[\\/]+$/, "");
   const idx = Math.max(cleaned.lastIndexOf("\\"), cleaned.lastIndexOf("/"));
   return idx >= 0 ? cleaned.slice(idx + 1) : cleaned;
-}
-
-/**
- * What each tool is doing, in plain words. The Mac app says it in French
- * (frenchStep()); this build speaks English everywhere else, so the ticker
- * does too. opencode's tools arrive under these names through its plugin.
- */
-const TOOL_LABELS: Record<string, string> = {
-  Bash: "Run",
-  PowerShell: "Run",
-  Read: "Read",
-  Write: "Write",
-  Edit: "Edit",
-  MultiEdit: "Edit",
-  NotebookEdit: "Edit notebook",
-  Glob: "Find files",
-  Grep: "Search code",
-  LS: "List",
-  WebSearch: "Search the web",
-  WebFetch: "Open page",
-  TodoWrite: "Update to-do list",
-  Task: "Subagent",
-  Agent: "Subagent",
-  Skill: "Skill",
-};
-
-/** Fields that say what a tool works on, most telling first. */
-const STEP_FIELDS = ["command", "file_path", "path", "pattern", "query", "url", "description", "skill"] as const;
-
-function stepLabel(tool: string, input: Record<string, unknown>): string {
-  // MCP tools: "mcp__server__tool" reads better as "server · tool".
-  const mcp = /^mcp__(.+?)__(.+)$/.exec(tool);
-  const label = mcp ? `${mcp[1]} · ${mcp[2].replace(/_/g, " ")}` : (TOOL_LABELS[tool] ?? tool);
-  for (const field of STEP_FIELDS) {
-    const value = input[field];
-    if (typeof value !== "string" || !value.trim()) continue;
-    const text = value.trim().split("\n")[0];
-    const shown = field === "file_path" || field === "path" ? lastPathComponent(text) : text;
-    return `${label} · ${shown.slice(0, 48)}`;
-  }
-  return label;
 }
 
 /**
@@ -503,6 +463,7 @@ function presentCard(island: Island, card: QueuedCard): boolean {
     sessionId: payload.session_id ?? "",
     tool,
     command: approvalTarget(tool, input),
+    description: typeof input.description === "string" ? input.description.trim().split("\n")[0] : "",
     toolKey: toolKey(tool, input),
   };
   // The relay's short ack window closes in 800 ms; everything below this
@@ -630,8 +591,8 @@ function handleHook(island: Island, payload: HookPayload) {
     case "PreToolUse": {
       ensurePill();
       State.updateTask(agentId, "working");
-      const tool = payload.tool_name ?? "Tool";
-      State.appendStep(agentId, stepLabel(tool, payload.tool_input ?? {}));
+      const step = stepFor(payload.tool_name ?? "Tool", payload.tool_input ?? {}, payload.cwd ?? "");
+      State.appendStep(agentId, step.text, step.full);
       surface("overview", false);
       break;
     }
@@ -752,7 +713,7 @@ function noteSession(
       State.noteSession(agentId, sid, { ...where, state: "thinking", step: (payload.prompt ?? payload.message ?? "").slice(0, 80) });
       break;
     case "PreToolUse":
-      State.noteSession(agentId, sid, { ...where, state: "working", step: stepLabel(payload.tool_name ?? "Tool", payload.tool_input ?? {}) });
+      State.noteSession(agentId, sid, { ...where, state: "working", step: stepFor(payload.tool_name ?? "Tool", payload.tool_input ?? {}, cwd).text });
       break;
     case "PermissionRequest":
       State.noteSession(agentId, sid, {

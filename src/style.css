@@ -473,6 +473,31 @@ body {
   will-change: transform, opacity;
 }
 
+/* A click on the ticker: the current step's whole command, three lines at most. */
+.ticker-full {
+  display: none;
+  position: absolute;
+  inset: 0 0 0 18px;
+  font: 400 11.5px/14px var(--mono);
+  color: #e8e9ec;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow: hidden;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  user-select: text;
+}
+.ticker.open {
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+.ticker.open .ticker-full {
+  display: -webkit-box;
+}
+.ticker.open .ticker-row {
+  visibility: hidden;
+}
+
 .ticker-row .tick-icon {
   width: 12px;
   display: grid;
@@ -629,6 +654,25 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   user-select: text;
+}
+
+/* The approval card's command: up to three lines, then an ellipsis. */
+.code.wrap {
+  line-height: 16px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  flex-shrink: 0;
+}
+
+.approval-desc {
+  font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 0;
 }
 
 .stack {

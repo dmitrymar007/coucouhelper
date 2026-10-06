@@ -13,6 +13,8 @@ export interface AgentTask {
   state: BotStateName;
   stepIndex: number;
   steps: string[];
+  /** Each step in full (the whole command, the whole path), alongside `steps`. */
+  stepFull?: string[];
   source: AgentSource;
   isIntegration: boolean;
   emote?: BotEmoteName | null;
@@ -62,6 +64,8 @@ export interface ApprovalInfo {
   sessionId: string;
   tool: string;
   command: string;
+  /** What the agent says the command is for ("Build the .deb package"), or "". */
+  description: string;
   /** Tool name and input, to recognise this call's PostToolUse. */
   toolKey: string;
 }
@@ -229,8 +233,8 @@ class AppState {
   chatHistory: ChatMessage[] = [];
   pendingApproval: ApprovalInfo | null = null;
   pendingQuestion: QuestionInfo | null = null;
-  /** Pixels the question card needs beyond its usual height (wrapped answers). */
-  questionExtra = 0;
+  /** Pixels the question or approval card needs beyond its usual height (wrapped answers, a long command). */
+  cardExtra = 0;
   /** Requests waiting behind the card on screen, oldest first. */
   cardQueue: QueuedCard[] = [];
 
@@ -279,11 +283,18 @@ class AppState {
     this.notify();
   }
 
-  appendStep(id: string, step: string) {
+  appendStep(id: string, step: string, full = step) {
     const t = this.tasks.find((x) => x.id === id);
     if (!t) return;
+    // Kept the same length as `steps`, whoever else set or cleared them.
+    const fulls = t.stepFull?.length === t.steps.length ? t.stepFull : [...t.steps];
     t.steps.push(step);
-    if (t.steps.length > 20) t.steps.shift();
+    fulls.push(full);
+    t.stepFull = fulls;
+    if (t.steps.length > 20) {
+      t.steps.shift();
+      fulls.shift();
+    }
     t.stepIndex = t.steps.length - 1;
     this.notify();
   }

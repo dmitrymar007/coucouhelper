@@ -29,7 +29,8 @@ original project.
 ## What it does
 
 - **Claude Code and opencode, live** — every session gets a pill: the prompt,
-  each tool it runs, done or failed. Several sessions of one agent are listed
+  each tool it runs (in the agent's own words when it gives some; hover or click
+  for the whole command), done or failed. Several sessions of one agent are listed
   with their project, state and context use.
 - **Approve from the island** — permission requests show up with **Deny /
   Allow**, from any window with **Alt+Shift+N / Alt+Shift+Y**. Whichever

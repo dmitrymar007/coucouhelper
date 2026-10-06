@@ -101,8 +101,8 @@ export function islandSize(
   mode: IslandMode,
   view: IslandViewName,
   chatCount = 0,
-  /** Extra height the question card asked for: its answers wrap to more rows. */
-  questionExtra = 0,
+  /** Extra height the question or approval card asked for: wrapped answers, a long command. */
+  cardExtra = 0,
 ): { w: number; h: number } {
   switch (mode) {
     case "hidden":
@@ -114,7 +114,7 @@ export function islandSize(
     case "expanded": {
       const h = view === "prompt"
         ? chatPromptHeight(chatCount)
-        : VIEW_LAYOUTS[view].height + (view === "question" ? questionExtra : 0);
+        : VIEW_LAYOUTS[view].height + (view === "question" || view === "approval" ? cardExtra : 0);
       return { w: EXPANDED_W, h };
     }
   }

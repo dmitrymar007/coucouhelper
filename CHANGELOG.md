@@ -2,6 +2,12 @@
 
 Coucou for Linux.
 
+## 0.2.9 — October 6, 2026
+
+- Steps read better. A command shows what the agent says it is for ("Run · Build the .deb package") instead of a cut-off command line; without one, the command loses its leading `cd … &&`, paths are written from the project or from `~`, and long ones are cut in the middle. Files come name first: "Edit · hooks.ts — src/island".
+- The whole command is a hover away in the ticker, and a click on the ticker shows it on up to three lines (another click, or the next step, folds it).
+- The permission card shows the agent's description above the command and the command on up to three lines; the card grows to fit. opencode passes the description once its plugin is updated (Settings → opencode → Update plugin).
+
 ## 0.2.8 — October 6, 2026
 
 - The card shortcuts move to Alt+Shift: Alt+Shift+Y allows, Alt+Shift+N denies, Alt+Shift+1…9 picks an answer, Alt+Shift+Enter ends a several-answers question. The GNOME extension changes: log out and back in once after updating.
