@@ -604,18 +604,25 @@ pub fn set_input_region(win: &WebviewWindow, rect: Region) {
     apply_input_region(&gw, rect);
 }
 
+/// Set on the GtkWindow, not on its GdkWindow: a client-decorated GtkWindow
+/// (tao makes every undecorated Wayland window one) rewrites the GdkWindow's
+/// input shape to the whole window on every size-allocate — a configure from
+/// the compositor is enough, and switching windows sends one. The widget's own
+/// region is the one GTK keeps and applies each time. Set on the GdkWindow, the
+/// collapsed island's strip quietly became the whole full-size window under
+/// the GNOME extension, and the top of the screen stopped taking clicks until
+/// the island was opened again.
 fn apply_input_region(gw: &impl IsA<gtk::Widget>, rect: Region) {
     match rect {
         None => gw.input_shape_combine_region(None),
         Some((x, y, w, h)) => {
-            let Some(gdk_window) = gw.window() else { return };
             let region = gtk::cairo::Region::create_rectangle(&gtk::cairo::RectangleInt::new(
                 x.floor() as i32,
                 y.floor() as i32,
                 w.ceil().max(0.0) as i32,
                 h.ceil().max(0.0) as i32,
             ));
-            gdk_window.input_shape_combine_region(&region, 0, 0);
+            gw.input_shape_combine_region(Some(&region));
         }
     }
 }
