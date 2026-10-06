@@ -2,6 +2,10 @@
 
 Coucou for Linux.
 
+## 0.2.7 — October 6, 2026
+
+- GNOME: a packaged Coucou started at login waits for its extension again. It only looked for the extension in ~/.local, so with the package's copy it fell back to the window below the top bar.
+
 ## 0.2.6 — October 6, 2026
 
 - The finished card counts a turn in tokens instead of dollars: "312k in · 9.8k out" (read, prompt cache included · written, thinking included), for Claude Code and opencode alike. opencode needs the updated plugin: Settings → opencode → Update plugin.

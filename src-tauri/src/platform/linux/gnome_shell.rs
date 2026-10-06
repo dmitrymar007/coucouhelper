@@ -101,11 +101,20 @@ pub fn on_bus() -> bool {
 /// Whether GNOME is going to start the extension: installed, switched on, and
 /// user extensions allowed. At login Coucou can start before GNOME has loaded
 /// its extensions, so this is what tells "not yet" from "not at all".
+///
+/// The copy GNOME runs is the user's when there is one (a user extension,
+/// which GNOME's switch can turn off), else the package's (a system one).
+/// Looking only for the user's copy, a packaged Coucou started at login
+/// decided there was no extension and fell back to the window below the bar.
 pub fn expected() -> bool {
     let Some(settings) = shell_settings() else { return false };
-    install_dir().join("metadata.json").is_file()
-        && enabled_list(&settings).iter().any(|u| u == UUID)
-        && !settings.boolean("disable-user-extensions")
+    if !enabled_list(&settings).iter().any(|u| u == UUID) {
+        return false;
+    }
+    if install_dir().join("metadata.json").is_file() {
+        return !settings.boolean("disable-user-extensions");
+    }
+    std::path::Path::new(PACKAGED_DIR).join("metadata.json").is_file()
 }
 
 /// Follows the extension for the rest of the run. Main thread only.
