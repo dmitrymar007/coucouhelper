@@ -145,6 +145,13 @@ export const Bridge = {
   opencodePluginInstall: () => callOrThrow<OpencodePluginStatus>("opencode_plugin_install"),
   /** Only from an explicit click in Settings. */
   opencodePluginRemove: () => callOrThrow<OpencodePluginStatus>("opencode_plugin_remove"),
+
+  // ── Cline hooks ──────────────────────────────────────────────────────────
+  clineHooksStatus: () => call<ClineHooksStatus>("cline_hooks_status"),
+  /** Only from an explicit click in Settings. */
+  clineHooksInstall: () => callOrThrow<ClineHooksStatus>("cline_hooks_install"),
+  /** Only from an explicit click in Settings. */
+  clineHooksRemove: () => callOrThrow<ClineHooksStatus>("cline_hooks_remove"),
   // ── GNOME Shell extension ────────────────────────────────────────────────
   shellExtensionStatus: () => call<ShellExtensionStatus>("shell_extension_status"),
   updateStatus: () => call<UpdateStatus>("update_status"),
@@ -218,6 +225,20 @@ export interface OpencodePluginStatus {
   installed: boolean;
   packaged: boolean;
   upToDate: boolean;
+  path: string;
+}
+
+export interface ClineHooksStatus {
+  /** Cline itself is installed. */
+  cline: boolean;
+  /** Every Coucou script is in Cline's hooks folder. */
+  installed: boolean;
+  /** Only some of them are. */
+  partial: boolean;
+  upToDate: boolean;
+  /** Events whose script belongs to another tool: Coucou leaves them alone. */
+  taken: string[];
+  /** Cline's global hooks folder. */
   path: string;
 }
 

@@ -4,7 +4,7 @@
 
 import "./settings.css";
 import {
-  Bridge, onEvent, type HookStatus, type OpencodePluginStatus, type ShellExtensionStatus, type UpdateStatus,
+  Bridge, onEvent, type ClineHooksStatus, type HookStatus, type OpencodePluginStatus, type ShellExtensionStatus, type UpdateStatus,
 } from "../core/bridge";
 import { DEFAULT_SETTINGS, type Settings } from "../core/state";
 import { API_MODELS, CLI_MODELS } from "../core/models";
@@ -463,6 +463,78 @@ function opencodeSection(initial: OpencodePluginStatus): HTMLElement {
   );
 }
 
+// ── Cline section ─────────────────────────────────────────────────────────────
+
+/** Coucou's hooks for Cline: its tasks on the island. */
+function clineSection(initial: ClineHooksStatus): HTMLElement {
+  const dot = statusDot(false);
+  const state = h("div", { class: "hint" });
+  const taken = h("div", { class: "hint" });
+  const installBtn = h("button", { class: "primary" });
+  const removeBtn = h("button", { class: "danger", text: "Remove" });
+  const feedback = h("div", {});
+
+  function draw(st: ClineHooksStatus) {
+    const some = st.installed || st.partial;
+    dot.style.background = st.installed && st.upToDate ? "#22c55e" : some ? "#f7b32b" : "#f4505e";
+    if (st.installed && st.upToDate) {
+      state.textContent = "Installed: Cline tasks show up on the island — what Cline is doing, its questions, when it is done.";
+    } else if (some) {
+      state.textContent = "An update for Coucou's Cline hooks is ready. Install it; Cline picks it up at once.";
+    } else if (!st.cline) {
+      state.textContent = "Cline was not found in VS Code. Once it is installed, Coucou's hooks show its tasks on the island.";
+    } else {
+      state.textContent =
+        "Show Cline's tasks on the island like Claude Code's: what it is doing, when it asks you something, " +
+        "when it is done, and what the task used.";
+    }
+    taken.textContent = st.taken.length
+      ? `Already used by another tool, so left alone: ${st.taken.join(", ")}. The island misses those events.`
+      : "";
+    installBtn.textContent = some && !st.upToDate ? "Update hooks" : "Install hooks";
+    installBtn.style.display = st.installed && st.upToDate ? "none" : "";
+    removeBtn.style.display = some ? "" : "none";
+  }
+
+  installBtn.addEventListener("click", async () => {
+    clear(feedback);
+    try {
+      draw(await Bridge.clineHooksInstall());
+      feedback.append(h("div", { class: "notice ok", text: "Done. Cline runs them from its next step." }));
+    } catch (err) {
+      feedback.append(h("div", { class: "notice err", text: `Could not install: ${String(err)}` }));
+    }
+  });
+
+  removeBtn.addEventListener("click", async () => {
+    clear(feedback);
+    try {
+      draw(await Bridge.clineHooksRemove());
+      feedback.append(h("div", { class: "notice ok", text: "Removed." }));
+    } catch (err) {
+      feedback.append(h("div", { class: "notice err", text: `Could not remove: ${String(err)}` }));
+    }
+  });
+
+  draw(initial);
+  return h(
+    "section",
+    {},
+    h("h2", {}, dot, h("span", { text: "Cline" })),
+    state,
+    taken,
+    h("div", { class: "row" }, installBtn, removeBtn),
+    h("div", {
+      class: "hint",
+      text:
+        `Installing writes small scripts to Cline's hooks folder, ${initial.path}, one per event, and changes nothing ` +
+        "else of Cline's. Cline's hooks cannot approve a tool, so approvals stay in Cline's panel " +
+        "(Cline's own Hooks setting must stay on, as it is by default).",
+    }),
+    feedback,
+  );
+}
+
 // ── GNOME section ─────────────────────────────────────────────────────────────
 
 /** The Coucou GNOME Shell extension: what it is, whether it runs, install or remove it. */
@@ -869,6 +941,7 @@ async function main() {
   const hasKey = (await Bridge.secretPresent("anthropic-api-key")) ?? false;
   const shell = await Bridge.shellExtensionStatus();
   const opencodePlugin = await Bridge.opencodePluginStatus();
+  const clineHooks = await Bridge.clineHooksStatus();
   const updates = await Bridge.updateStatus();
 
   const keys = [
@@ -883,6 +956,7 @@ async function main() {
     h("h1", {}, h("span", { text: "Coucou" }), h("span", { class: "version", text: version })),
     claudeSection(status),
     ...(opencodePlugin ? [opencodeSection(opencodePlugin)] : []),
+    ...(clineHooks ? [clineSection(clineHooks)] : []),
     ...(shell?.applicable ? [gnomeSection(shell)] : []),
     chatSection(),
     apiSection(hasKey),

@@ -5,6 +5,7 @@ mod claude;
 mod claude_cli;
 mod opencode_cli;
 mod opencode_plugin;
+mod cline_hooks;
 mod files;
 mod hooks;
 mod integrations;
@@ -399,6 +400,24 @@ fn opencode_plugin_remove() -> Result<opencode_plugin::Status, String> {
     opencode_plugin::remove()
 }
 
+/// Coucou's hooks for Cline: installed, up to date, any taken by another tool?
+#[tauri::command]
+fn cline_hooks_status() -> cline_hooks::Status {
+    cline_hooks::status()
+}
+
+/// Only from an explicit click in Settings.
+#[tauri::command]
+fn cline_hooks_install() -> Result<cline_hooks::Status, String> {
+    cline_hooks::install()
+}
+
+/// Only from an explicit click in Settings.
+#[tauri::command]
+fn cline_hooks_remove() -> Result<cline_hooks::Status, String> {
+    cline_hooks::remove()
+}
+
 /// Is `opencode` installed, and which version? Asked by the settings window.
 #[tauri::command]
 async fn chat_opencode_install() -> opencode_cli::Install {
@@ -678,6 +697,9 @@ pub fn run() {
             opencode_plugin_status,
             opencode_plugin_install,
             opencode_plugin_remove,
+            cline_hooks_status,
+            cline_hooks_install,
+            cline_hooks_remove,
             chat_resume_last,
             chat_resume,
             chat_sessions,

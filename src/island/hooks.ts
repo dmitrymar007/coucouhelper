@@ -20,20 +20,25 @@ const CLAUDE_ID = "integration_claude";
 const APPROVAL_AGENTS: ReadonlySet<string> = new Set(["agent_opencode"]);
 
 /**
- * Agents Coucou integrates itself (opencode, through its plugin): their pill
+ * Agents Coucou integrates itself (opencode through its plugin, Cline through
+ * its hooks): their pill
  * has a fixed name and colour, shows from launch while the integration is
  * installed, and goes back to idle after a session like Claude Code's —
  * instead of appearing and vanishing with every answer like an unknown agent.
  */
 const DECLARED_AGENTS: ReadonlyMap<string, { name: string; color: string }> = new Map([
   ["agent_opencode", { name: "opencode", color: "#FAB283" }],
+  ["agent_cline", { name: "Cline", color: "#A78BFA" }],
 ]);
 
-/** Puts the opencode pill up when its plugin is installed. */
+/** Puts the opencode and Cline pills up when their integration is installed. */
 export async function showDeclaredAgents() {
   const plugin = await Bridge.opencodePluginStatus();
   const opencode = DECLARED_AGENTS.get("agent_opencode")!;
   if (plugin?.installed) State.upsertExternalAgent("agent_opencode", opencode.name, opencode.color);
+  const clineHooks = await Bridge.clineHooksStatus();
+  const cline = DECLARED_AGENTS.get("agent_cline")!;
+  if (clineHooks?.installed || clineHooks?.partial) State.upsertExternalAgent("agent_cline", cline.name, cline.color);
 }
 
 /** Clears the approval card if no decision was made before the hook gave up. */
@@ -121,6 +126,8 @@ export interface HookPayload {
   turn_tokens_in?: number;
   turn_tokens_out?: number;
   tokens?: number;
+  /** Notification: the agent waits for the user's answer (Cline's questions). */
+  waiting?: boolean;
 }
 
 /** Plain process ids only, and not too many: "Open terminal" walks them. */
@@ -612,7 +619,8 @@ function handleHook(island: Island, payload: HookPayload) {
       if (lower.includes("rate limit") || lower.includes("limite d")) {
         State.updateTask(agentId, "ratelimit");
         Sound.play("rate");
-      } else if (message.endsWith("?")) {
+      } else if (message.endsWith("?") || payload.waiting === true) {
+        ensurePill();
         State.updateTask(agentId, "question");
         State.appendStep(agentId, message);
       }
@@ -721,6 +729,11 @@ function noteSession(
         state: payload.tool_name === "AskUserQuestion" ? "question" : "approval",
         step: "Waiting for you",
       });
+      break;
+    case "Notification":
+      if (payload.waiting === true) {
+        State.noteSession(agentId, sid, { ...where, state: "question", step: (payload.message ?? "").slice(0, 80) || "Waiting for you" });
+      }
       break;
     case "Stop":
       State.noteSession(agentId, sid, { ...where, ...spent, state: "finished", step: payload.message?.slice(0, 80) || "Done" });
