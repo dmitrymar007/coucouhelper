@@ -2,6 +2,10 @@
 
 Coucou for Linux.
 
+## 0.3.1 — October 8, 2026
+
+- Pick a colour for each pill: **Settings → Pill colours** sets the colour of the Mochi head in the pill (and the pill's tint) for Claude Code, opencode, Cline and every integration. Reset brings back the pill's own colour.
+
 ## 0.3.0 — October 7, 2026
 
 - Cline support. Cline's tasks in VS Code get their own pill, like opencode's: the prompt, each tool it runs (under the same names as Claude Code's: Run, Read, Edit…), its questions, done or cancelled, and on the finished card the cost, context and tokens of the turn. Install from **Settings → Cline → Install hooks**: Coucou writes one small script per event to Cline's global hooks folder (`~/Documents/Cline/Hooks`, or your desktop's own documents folder) and never replaces a hook of another tool. Cline's hooks can't approve a tool, so approvals stay in Cline's panel; Cline also lists each hook it runs in its chat.

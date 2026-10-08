@@ -5,7 +5,7 @@
 
 import { Bridge, onEvent } from "../core/bridge";
 import { Sound } from "../core/sound";
-import { State, type AgentQuestion, type QueuedCard } from "../core/state";
+import { DECLARED_AGENTS, State, type AgentQuestion, type QueuedCard } from "../core/state";
 import type { Island } from "./island";
 import { stepFor } from "./steps";
 
@@ -18,18 +18,6 @@ const CLAUDE_ID = "integration_claude";
  * answer would mean nothing to it.
  */
 const APPROVAL_AGENTS: ReadonlySet<string> = new Set(["agent_opencode"]);
-
-/**
- * Agents Coucou integrates itself (opencode through its plugin, Cline through
- * its hooks): their pill
- * has a fixed name and colour, shows from launch while the integration is
- * installed, and goes back to idle after a session like Claude Code's —
- * instead of appearing and vanishing with every answer like an unknown agent.
- */
-const DECLARED_AGENTS: ReadonlyMap<string, { name: string; color: string }> = new Map([
-  ["agent_opencode", { name: "opencode", color: "#FAB283" }],
-  ["agent_cline", { name: "Cline", color: "#A78BFA" }],
-]);
 
 /** Puts the opencode and Cline pills up when their integration is installed. */
 export async function showDeclaredAgents() {

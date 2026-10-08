@@ -204,6 +204,27 @@ select {
   padding: 5px 8px;
 }
 
+input[type="color"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 34px;
+  height: 22px;
+  padding: 2px;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+input[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+input[type="color"]::-webkit-color-swatch {
+  border: none;
+  border-radius: 4px;
+}
+
 input::placeholder {
   color: var(--dim-2);
 }

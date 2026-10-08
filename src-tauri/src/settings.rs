@@ -2,6 +2,7 @@
 // No secret ever lands here — API keys live in the OS keychain (see secrets.rs).
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,6 +45,10 @@ pub struct Settings {
     /// Look for a newer release on GitHub every few hours (packaged installs).
     #[serde(default = "default_true")]
     pub auto_update: bool,
+    /// Colours the user picked for pills, by pill id ("#rrggbb"); a pill not
+    /// listed keeps its own.
+    #[serde(default)]
+    pub pill_colors: HashMap<String, String>,
 }
 
 fn default_true() -> bool {
@@ -90,6 +95,7 @@ impl Default for Settings {
             last_chat_session: None,
             shell_hint_shown: false,
             auto_update: true,
+            pill_colors: HashMap::new(),
         }
     }
 }

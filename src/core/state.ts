@@ -10,6 +10,8 @@ export interface AgentTask {
   id: string;
   name: string;
   color: string;
+  /** The pill's own colour, before the user's pick (Settings → Pill colours). */
+  defaultColor?: string;
   state: BotStateName;
   stepIndex: number;
   steps: string[];
@@ -145,6 +147,20 @@ export const INTEGRATION_AGENTS: AgentTask[] = [
   task("integration_stripe", "Stripe", "#0570DE", "n8n"),
 ];
 
+/**
+ * Agents Coucou integrates itself (opencode through its plugin, Cline through
+ * its hooks): their pill has a fixed name and colour, shows from launch while
+ * the integration is installed, and goes back to idle after a session like
+ * Claude Code's — instead of appearing and vanishing with every answer like an
+ * unknown agent.
+ */
+export const DECLARED_AGENTS: ReadonlyMap<string, { name: string; color: string }> = new Map([
+  ["agent_opencode", { name: "opencode", color: "#FAB283" }],
+  ["agent_cline", { name: "Cline", color: "#A78BFA" }],
+]);
+
+const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
+
 export const TOGGLEABLE_INTEGRATION_IDS = [
   "integration_resend", "integration_n8n", "integration_vercel", "integration_github",
   "integration_notion", "integration_calcom", "integration_stripe",
@@ -181,6 +197,8 @@ export interface Settings {
   lastChatSession: string | null;
   /** Look for a newer release on GitHub every few hours (packaged installs). */
   autoUpdate: boolean;
+  /** Colours picked for pills, by pill id ("#rrggbb"). */
+  pillColors: Record<string, string>;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -201,6 +219,7 @@ export const DEFAULT_SETTINGS: Settings = {
   chatIdleMinutes: 30,
   lastChatSession: null,
   autoUpdate: true,
+  pillColors: {},
 };
 
 type Listener = () => void;
@@ -324,6 +343,21 @@ class AppState {
     this.notify();
   }
 
+  /** The colour pill `id` shows: the user's pick, else `fallback`. */
+  pillColor(id: string, fallback: string): string {
+    const picked = this.settings.pillColors?.[id];
+    return picked && HEX_COLOR.test(picked) ? picked : fallback;
+  }
+
+  /** Repaints every pill after the colours changed in Settings. */
+  applyPillColors() {
+    for (const t of this.tasks) {
+      t.defaultColor ??= t.color;
+      t.color = this.pillColor(t.id, t.defaultColor);
+    }
+    this.notify();
+  }
+
   setPillBadge(id: string, badge: PillBadge | null) {
     const t = this.tasks.find((x) => x.id === id);
     if (!t) return;
@@ -337,7 +371,9 @@ class AppState {
       const shouldLoad =
         proto.id === "integration_claude" || this.settings.activeIntegrations.includes(proto.id);
       const idx = this.tasks.findIndex((t) => t.id === proto.id);
-      if (shouldLoad && idx < 0) this.tasks.push({ ...proto, steps: [] });
+      if (shouldLoad && idx < 0) {
+        this.tasks.push({ ...proto, steps: [], defaultColor: proto.color, color: this.pillColor(proto.id, proto.color) });
+      }
       if (!shouldLoad && idx >= 0) this.tasks.splice(idx, 1);
     }
     // Order: integration_claude first, then agent_* pills (visible in slice(0,4)),
@@ -374,7 +410,7 @@ class AppState {
     if (this.tasks.some((t) => t.id === id)) return;
     const at = this.tasks.findIndex((t) => t.id === "integration_claude") + 1;
     this.tasks.splice(at, 0, {
-      id, name, color,
+      id, name, color: this.pillColor(id, color), defaultColor: color,
       state: "idle", stepIndex: 0, steps: [],
       source: "agent", isIntegration: false,
     });

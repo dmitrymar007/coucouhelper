@@ -6,7 +6,7 @@ import "./settings.css";
 import {
   Bridge, onEvent, type ClineHooksStatus, type HookStatus, type OpencodePluginStatus, type ShellExtensionStatus, type UpdateStatus,
 } from "../core/bridge";
-import { DEFAULT_SETTINGS, type Settings } from "../core/state";
+import { DECLARED_AGENTS, DEFAULT_SETTINGS, INTEGRATION_AGENTS, type Settings } from "../core/state";
 import { API_MODELS, CLI_MODELS } from "../core/models";
 import { h, clear } from "../views/dom";
 
@@ -796,6 +796,55 @@ function integrationsSection(present: Record<string, boolean>): HTMLElement {
   return h("section", {}, h("h2", {}, h("span", { text: "Integrations" })), note, list);
 }
 
+// ── Pill colours section ──────────────────────────────────────────────────────
+
+/** One colour per pill: Mochi's body in the pill, and the pill's tint. */
+function pillColorsSection(): HTMLElement {
+  const pills = [
+    ...INTEGRATION_AGENTS.filter((t) => t.id === "integration_claude"),
+    ...[...DECLARED_AGENTS].map(([id, a]) => ({ id, ...a })),
+    ...INTEGRATION_AGENTS.filter((t) => t.id !== "integration_claude"),
+  ];
+  const grid = h("div", { style: "display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 18px" });
+
+  for (const pill of pills) {
+    const picked = () => settings.pillColors?.[pill.id];
+    const input = h("input", { type: "color", value: (picked() ?? pill.color).toLowerCase() }) as HTMLInputElement;
+    const reset = h("button", { text: "Reset", title: `Back to ${pill.color}` }) as HTMLButtonElement;
+    const draw = () => { reset.style.visibility = picked() ? "" : "hidden"; };
+
+    input.addEventListener("change", () => {
+      settings.pillColors = { ...settings.pillColors, [pill.id]: input.value };
+      draw();
+      void save();
+    });
+    reset.addEventListener("click", () => {
+      const { [pill.id]: _, ...rest } = settings.pillColors ?? {};
+      settings.pillColors = rest;
+      input.value = pill.color.toLowerCase();
+      draw();
+      void save();
+    });
+    draw();
+
+    grid.append(
+      h("div", { class: "row", style: "gap:10px;flex-wrap:nowrap" },
+        input,
+        h("span", { style: "font-size:12.5px;flex:1 1 auto", text: pill.name }),
+        reset,
+      ),
+    );
+  }
+
+  return h(
+    "section",
+    {},
+    h("h2", {}, h("span", { text: "Pill colours" })),
+    h("div", { class: "hint", text: "The colour of each Mochi head on the island and of its pill." }),
+    grid,
+  );
+}
+
 // ── Updates section ───────────────────────────────────────────────────────────
 
 /** Coucou's own updates: what is installed, what is out, and the one click to update. */
@@ -961,6 +1010,7 @@ async function main() {
     chatSection(),
     apiSection(hasKey),
     integrationsSection(present),
+    pillColorsSection(),
     generalSection(),
     ...(updates?.applicable ? [updatesSection(updates)] : []),
     h("div", {
