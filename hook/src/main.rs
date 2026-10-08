@@ -14,6 +14,8 @@
 //!   asks in the terminal exactly as if Coucou were not installed.
 //!
 //! Usage: `coucou-hook <EventName>` (the name is also read from the JSON).
+//! `--agent <name>` tags the event for another agent's pill; `--agent cline`
+//! also reads Cline's own hook JSON (see cline.rs).
 
 use std::io::{Read, Write};
 use std::sync::mpsc;
@@ -34,6 +36,7 @@ const DROPPED_FIELDS: &[&str] = &["tool_response", "transcript_path"];
 const MAX_FIELD_LEN: usize = 2_000;
 
 
+mod cline;
 mod unix;
 use unix::{ancestor_pids, connect};
 
@@ -147,6 +150,16 @@ fn read_event() -> Option<(String, String, Option<serde_json::Value>)> {
     }
 
     let mut payload = serde_json::from_slice::<serde_json::Value>(&raw).ok()?;
+    // Cline's hooks speak their own JSON: the island gets Claude Code's.
+    let from_cline = agent_arg().as_deref() == Some("cline");
+    if from_cline {
+        let mut event = cline::translate(&payload)?;
+        if event.get("hook_event_name").and_then(|v| v.as_str()) == Some("Stop") {
+            let task = event.get("session_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            event.extend(cline::spent(&task));
+        }
+        payload = serde_json::Value::Object(event);
+    }
     let map = payload.as_object_mut()?;
 
     // Parse argv: "coucou-hook.exe [--agent <name>] [<EventName>]"

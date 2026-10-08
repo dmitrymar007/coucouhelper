@@ -72,6 +72,20 @@ The pill lifecycle:
 
 Settings → opencode → Install plugin writes `~/.config/opencode/plugin/coucou.js`, which relays opencode's events with `--agent opencode` (see the exception above).
 
+### Cline
+
+Cline (the VS Code extension) runs, for each event, an executable named after it from its global hooks folder `<Documents>/Cline/Hooks/` (`xdg-user-dir DOCUMENTS`), with its own JSON on stdin (`hookName`, `taskId`, `workspaceRoots`, `preToolUse: { toolName, parameters }`…). Settings → Cline → Install hooks writes one `sh` script per event there — `TaskStart`, `TaskResume`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `TaskComplete`, `TaskCancel` — each running `coucou-hook --agent cline` and answering `{"cancel":false}`. With `--agent cline` the relay translates (`hook/src/cline.rs`):
+
+| Cline | Island |
+|---|---|
+| `TaskStart`, `TaskResume` | `SessionStart` |
+| `UserPromptSubmit` | `UserPromptSubmit`, the prompt without Cline's `<user_input>` markup |
+| `PreToolUse` / `PostToolUse` | the same, tools under Claude Code's names (`run_commands` → Bash, `read_files` → Read, `editor`/`apply_patch` → Edit…); a failed tool → `PostToolUseFailure` |
+| `PreToolUse` of `ask_question` | `Notification` with `waiting: true`: the pill shows the question |
+| `TaskComplete` / `TaskCancel` | `Stop`, with cost, context and turn tokens from `~/.cline/data/sessions/<taskId>/` |
+
+A Cline hook can cancel a task but not approve a tool, so there is no `PermissionRequest` for Cline: approvals stay in its panel.
+
 ### Any other tool
 
 Follow the generic pattern: call `~/.local/share/coucou/bin/coucou-hook --agent <your-name> <EventName>` and let the relay forward the event.

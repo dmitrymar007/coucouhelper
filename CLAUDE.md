@@ -8,6 +8,7 @@ Coucou puts Mochi, a small animated character, at the top centre of the screen. 
 - `hook/` — `coucou-hook`, the relay Claude Code and opencode run on every event.
 - `gnome-extension/` — the GNOME Shell extension (`coucou@coucouhelper`) that puts the island over the top bar. The app embeds these files (`include_str!`) and installs them from Settings → GNOME.
 - `opencode-plugin/coucou.js` — the opencode plugin, also embedded and installed from Settings.
+- Cline: `src-tauri/src/cline_hooks.rs` writes one `sh` script per event to Cline's global hooks folder (`<Documents>/Cline/Hooks/`); the relay translates Cline's hook JSON with `--agent cline` (`hook/src/cline.rs`). No approvals: a Cline hook can't approve a tool.
 - `sounds/` — the 28 WAVs, served/copied by `vite.config.ts`.
 - `docs/AGENTS.md` — the hook protocol and the `coucou_agent` field.
 

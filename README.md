@@ -7,7 +7,8 @@
 **Mochi lives at the top of your screen and keeps an eye on your AI coding agents.**
 
 Approve Claude Code and opencode permissions, answer their questions, watch your
-sessions work, drop a file, chat — without leaving what you're doing.
+sessions — and Cline's tasks in VS Code — work, drop a file, chat — without
+leaving what you're doing.
 
 ![Ubuntu 24.04+](https://img.shields.io/badge/Ubuntu-24.04%2B-E95420?logo=ubuntu&logoColor=white)
 ![GNOME 46+](https://img.shields.io/badge/GNOME-46%2B-4A86CF?logo=gnome&logoColor=white)
@@ -32,6 +33,9 @@ original project.
   each tool it runs (in the agent's own words when it gives some; hover or click
   for the whole command), done or failed. Several sessions of one agent are listed
   with their project, state and context use.
+- **Cline, too** — Cline's tasks in VS Code get their own pill: the prompt, each
+  tool, its questions, done or cancelled, cost and tokens. Cline's hooks can't
+  approve a tool, so approvals stay in Cline's panel.
 - **Approve from the island** — permission requests show up with **Deny /
   Allow**, from any window with **Alt+Shift+N / Alt+Shift+Y**. Whichever
   answers first, the island or the terminal, wins. A request from an agent that
@@ -108,6 +112,10 @@ bar.
   written until you confirm. Your own hooks are left alone.
 - **opencode** — **Settings → opencode → Install plugin** writes one file,
   `~/.config/opencode/plugin/coucou.js`. Restart opencode.
+- **Cline** — **Settings → Cline → Install hooks** writes one small script per
+  event to Cline's hooks folder, `~/Documents/Cline/Hooks/` (your desktop's own
+  documents folder, as `xdg-user-dir DOCUMENTS` names it). A hook of the same
+  name from another tool is left alone. Cline picks them up at once.
 - **Chat** — **Settings → Chat**: Claude Code (`claude auth login` once),
   opencode, or an Anthropic API key in **Settings → Claude**.
 - **Start at login** — **Settings → General → Launch at startup**.
@@ -237,7 +245,7 @@ docs/AGENTS.md       the hook protocol, to give any tool its own pill
 
 ## Uninstall
 
-1. In Settings: Claude Code → **Uninstall hooks…**, opencode → **Remove**,
+1. In Settings: Claude Code → **Uninstall hooks…**, opencode → **Remove**, Cline → **Remove**,
    GNOME → **Turn off** (or **Remove**).
 2. `sudo apt remove coucou`
 3. Optionally: `rm -rf ~/.config/coucou ~/.local/share/coucou`

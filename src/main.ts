@@ -98,6 +98,7 @@ async function main() {
     State.settings = { ...State.settings, ...s };
     island.applySettings();
     State.loadIntegrationTasks();
+    State.applyPillColors();
     void refreshConfigured();
   });
 
