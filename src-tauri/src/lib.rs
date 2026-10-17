@@ -675,6 +675,10 @@ fn open_settings_window(app: AppHandle) {
 }
 
 pub fn run() {
+    if platform::shell_extension_disabled() {
+        log::line("GNOME extension switched off: Coucou will not start");
+        return;
+    }
     platform::prepare_environment();
     let loaded = settings::load();
     let gate = Arc::new(PollGate::new());
@@ -778,6 +782,11 @@ pub fn run() {
             let shell_app = handle.clone();
             let shell_gate = gate.clone();
             platform::shell_extension_start(move |event| match event {
+                platform::ShellEvent::Disabled => {
+                    log::line("GNOME extension switched off: quitting Coucou");
+                    shell_app.state::<Chat>().stop();
+                    shell_app.exit(0);
+                }
                 platform::ShellEvent::Active(on) => {
                     log::line(format!("shell extension {}", if on { "active" } else { "inactive" }));
                     let pref = shell_app.state::<Shared>().settings.lock().unwrap().screen.clone();

@@ -648,10 +648,20 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Everything filesystem-shaped lives in one test on purpose: it points
-    /// the home directory at a temp directory, and that is process-wide.
+    /// HOME is process-wide: keep these filesystem checks in a child so
+    /// parallel tests cannot observe a different hook path halfway through.
     #[test]
     fn writing_backs_up_preserves_and_refuses_a_changed_file() {
+        const CHILD: &str = "COUCOU_TEST_HOOKS_ISOLATED";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "hooks::tests::writing_backs_up_preserves_and_refuses_a_changed_file", "--nocapture"])
+                .env(CHILD, "1")
+                .output().expect("run hook filesystem checks in an isolated process");
+            assert!(output.status.success(), "{}\n{}",
+                String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+            return;
+        }
         let tmp = std::env::temp_dir().join(format!("coucou-hooks-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(tmp.join(".claude")).unwrap();

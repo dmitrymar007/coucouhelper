@@ -107,8 +107,11 @@ The extension only serves the Coucou installed by the package
 (`/usr/bin/coucou`). Any other build — an AppImage, a `cargo build` — makes
 GNOME Shell ask you once per session whether that file may drive the island.
 
-Without the extension Coucou still works, as a small window right below the top
-bar.
+Before the extension is configured, Coucou opens below the top bar so you can
+install it from Settings. Turning the installed extension off in GNOME Extensions
+quits the entire app and prevents it from starting again at login while the
+extension is off. To resume, turn the extension on and launch Coucou. Locking the
+screen only suspends the integration; it does not quit the app.
 
 ### 4. Connect your agents
 

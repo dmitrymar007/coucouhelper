@@ -21,6 +21,8 @@ pub struct LocalTime {
 
 /// News from the desktop shell's helper (the GNOME Shell extension on Linux).
 pub enum ShellEvent {
+    /// The user switched the extension off; the whole app must quit.
+    Disabled,
     /// It took the island on (true), or went away (false).
     Active(bool),
     /// Pointer relative to the island window, logical pixels, and whether a

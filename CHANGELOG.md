@@ -2,6 +2,13 @@
 
 Coucou for Linux.
 
+## 0.3.5 — October 17, 2026
+
+- Turning off the Coucou extension in GNOME now quits the entire application, including its tray icon and island chat backends. While the installed extension is explicitly disabled, Coucou exits before creating windows or starting services, including when launched at login.
+- Screen lock and temporary loss of the GNOME Shell connection do not quit Coucou. The application follows GNOME's persistent extension preferences independently of the island's window backend.
+- Honor GNOME's disabled-extension list, including when it overrides the enabled list. Turning the extension on from Coucou Settings clears only Coucou's disabled entry and preserves every other extension and the global switch.
+- To use Coucou again after switching it off, enable the extension in GNOME Extensions, then launch Coucou. First-time setup remains available before the extension is configured.
+
 ## 0.3.4 — October 17, 2026
 
 - Fix Codex's asynchronous multiple-choice questions missing from the island. The VS Code bridge now handles typed `agentMessage.questions` notifications as well as blocking `requestUserInput` requests. Island answers use the same structured user reply as the official VS Code UI, without changing model or approval settings.

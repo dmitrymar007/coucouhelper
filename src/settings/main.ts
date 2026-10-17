@@ -642,7 +642,7 @@ function gnomeSection(initial: ShellExtensionStatus): HTMLElement {
     try {
       const st = await Bridge.shellExtensionRemove();
       draw(st);
-      feedback.append(h("div", { class: "notice ok", text: `${st.packaged ? "Turned off" : "Removed"}. GNOME stopped it; restart Coucou to go back to the window below the top bar.` }));
+      feedback.append(h("div", { class: "notice ok", text: `${st.packaged ? "Turned off" : "Removed"}. Coucou will quit.` }));
     } catch (err) {
       feedback.append(h("div", { class: "notice err", text: `Could not remove: ${String(err)}` }));
     }
@@ -662,7 +662,9 @@ function gnomeSection(initial: ShellExtensionStatus): HTMLElement {
           ? "The extension came with the Coucou package; turning it on adds it to the extensions GNOME starts. "
           : "Installing writes the extension to ~/.local/share/gnome-shell/extensions/coucou@coucouhelper and adds it to the " +
             "extensions GNOME starts. ") +
-        "Nothing else of GNOME's is changed. It only acts on Coucou's own island.",
+        "Turning it off in GNOME also quits Coucou and prevents startup while the installed extension is off. " +
+        "To use Coucou again, turn the extension on in GNOME Extensions, then launch Coucou. " +
+        "Locking the screen only suspends the integration.",
     }),
     feedback,
   );
