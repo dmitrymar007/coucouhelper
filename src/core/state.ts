@@ -100,6 +100,7 @@ export interface QueuedCard {
   /** The hook payload as it came: the card is built from it when its turn comes. */
   payload: {
     session_id?: string;
+    coucou_transport?: string;
     tool_name?: string;
     tool_input?: Record<string, unknown>;
   };

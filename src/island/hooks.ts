@@ -109,6 +109,8 @@ export interface HookPayload {
   tool_input?: Record<string, unknown>;
   /** Optional agent tag: lowercase, digits and hyphens, ≤ 24 chars. */
   coucou_agent?: string;
+  /** Native App Server bridge can return typed question answers. */
+  coucou_transport?: string;
   /** Linux relay: the session's ancestor processes, nearest first. */
   ancestor_pids?: unknown;
   /** On Stop: what the session has cost (opencode) and the context its last
@@ -355,6 +357,10 @@ export function questionToTerminal(island: Island) {
   if (!q) return;
   void Bridge.approvalDecline(q.requestId);
   clearQuestion(island, q.agentId);
+  if (q.agentId === "agent_codex") {
+    const task = State.tasks.find((t) => t.id === q.agentId);
+    void Bridge.focusTerminal(task?.sessionPids ?? [], task?.sessionCwd ?? null);
+  }
 }
 
 /** Takes the approval card down and hands the island back. */
@@ -430,7 +436,7 @@ const RELAY_WAIT_MS = 108_000;
 function presentCard(island: Island, card: QueuedCard): boolean {
   const { requestId, agentId, payload } = card;
   // Codex PermissionRequest cannot carry updatedInput answers.
-  if (agentId === "agent_codex" && payload.tool_name === "AskUserQuestion") {
+  if (agentId === "agent_codex" && payload.tool_name === "AskUserQuestion" && payload.coucou_transport !== "codex-app-server") {
     void Bridge.approvalDecline(requestId);
     return false;
   }

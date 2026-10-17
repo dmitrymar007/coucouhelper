@@ -38,10 +38,15 @@ const MAX_FIELD_LEN: usize = 2_000;
 
 mod cline;
 mod codex;
+mod codex_binary;
+mod codex_proxy;
 mod unix;
 use unix::{ancestor_pids, connect};
 
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("--codex-app-server") {
+        std::process::exit(codex_proxy::run(std::env::args_os().skip(2).collect()));
+    }
     // Coucou's own chat runs Claude Code with hooks off; should they fire
     // anyway, the island must not report its own chat as a session.
     if std::env::var_os("COUCOU_CHAT").is_some() {
@@ -54,6 +59,11 @@ fn main() {
     let from_codex = serde_json::from_str::<serde_json::Value>(&payload).ok()
         .is_some_and(|v| v["coucou_agent"] == "codex");
 
+    // The App Server bridge mirrors the native request after all policy hooks
+    // have run. Yield only our permission hook so VS Code can show its prompt.
+    if from_codex && event == "PermissionRequest" && std::env::var_os("COUCOU_CODEX_BRIDGE").is_some() {
+        std::process::exit(0);
+    }
     let waits_for_answer = event == "PermissionRequest";
     let budget = if waits_for_answer { DECISION_BUDGET } else { FIRE_AND_FORGET_BUDGET };
 

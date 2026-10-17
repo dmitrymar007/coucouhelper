@@ -48,10 +48,33 @@ decision, so the relay writes nothing and the agent re-asks in its terminal.
 `~/.codex/hooks.json` (or `$CODEX_HOME/hooks.json`), then merges commands with
 `--agent codex`. Review and trust the changed hooks in Codex `/hooks`. Codex
 has its own persistent `agent_codex` pill and supports Allow/Deny through the
-compatible `PermissionRequest` decision format. Questions stay in Codex:
-its permission hooks cannot return `updatedInput`. The relay also recognizes
-old unlabelled imports by Codex's `turn_id` or rollout transcript filename.
-`Interrupt` finishes the turn; Codex transcripts are not parsed as Claude usage.
+compatible `PermissionRequest` decision format. With hooks alone, permission
+prompts run before the native UI and questions remain in Codex. For parity with
+Claude Code's two interfaces, enable **Codex · VS Code bridge** in Settings:
+
+- `src-tauri/src/codex_vscode.rs` previews/backups a single VS Code setting,
+  `chatgpt.cliExecutable`, preserving JSONC. It points at the launcher
+  `~/.local/share/coucou/bin/coucou-codex`. The official extension is not patched.
+- The launcher runs `coucou-hook --codex-app-server`; `hook/src/codex_proxy.rs`
+  forwards App Server stdio unchanged and mirrors native command/file/permission
+  approval requests and `item/tool/requestUserInput` to the Coucou socket.
+- Native requests are forwarded to VS Code before connecting to Coucou. The
+  first response is sent once; late competing responses are ignored. Closing
+  the socket removes the other island card through `approval-gone`; App Server's
+  `serverRequest/resolved` clears the native prompt after an island answer.
+- Questions carry `coucou_transport: "codex-app-server"`; only this transport
+  enables Codex's `AskUserQuestion` cards. The bridge translates question text
+  back to question IDs and validates selected labels against original options.
+  Secret/free-text/unsupported prompts remain in VS Code. Choice prompts with
+  free-text alternatives offer **In VS Code** for those answers.
+- The child inherits `COUCOU_CODEX_BRIDGE=1`. Only Coucou's own Codex
+  `PermissionRequest` hook yields; lifecycle hooks, other policy hooks, the
+  sandbox and approval reviewers are unchanged. No inference API or new
+  network listener is introduced.
+
+The relay also recognizes old unlabelled imports by Codex's `turn_id` or rollout
+transcript filename. `Interrupt` finishes the turn; Codex transcripts are not
+parsed as Claude usage.
 
 **Exception: opencode.** The Coucou plugin for opencode
 (`opencode-plugin/coucou.js`, installed from Settings → opencode) sends

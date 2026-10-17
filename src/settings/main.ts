@@ -4,7 +4,7 @@
 
 import "./settings.css";
 import {
-  Bridge, onEvent, type ClineHooksStatus, type HookStatus, type OpencodePluginStatus, type ShellExtensionStatus, type UpdateStatus,
+  Bridge, onEvent, type ClineHooksStatus, type CodexVSCodeStatus, type HookStatus, type OpencodePluginStatus, type ShellExtensionStatus, type UpdateStatus,
 } from "../core/bridge";
 import { DECLARED_AGENTS, DEFAULT_SETTINGS, INTEGRATION_AGENTS, type Settings } from "../core/state";
 import { API_MODELS, CLI_MODELS } from "../core/models";
@@ -97,7 +97,7 @@ function agentHooksSection(status: HookStatus, codex = false): HTMLElement {
     }
 
     if (codex) body.append(h("div", { class: "hint", text:
-      "After installing, review and trust these hooks in Codex /hooks. Permission decisions require a click in the island; questions stay in Codex.",
+      "Review and trust these hooks in Codex /hooks. Enable the VS Code bridge below to answer permission requests and questions from either VS Code or the island.",
     }));
     const actions = h("div", { class: "row" });
     const install = h("button", {
@@ -178,6 +178,56 @@ function agentHooksSection(status: HookStatus, codex = false): HTMLElement {
     })));
   }
 
+  draw();
+  return section;
+}
+
+/** Native Codex prompts mirrored without blocking the VS Code interface. */
+function codexVSCodeSection(initial: CodexVSCodeStatus): HTMLElement {
+  let status = initial;
+  const body = h("div", { style: "display:flex;flex-direction:column;gap:12px" });
+  const dot = statusDot(status.installed);
+  const section = h("section", {}, h("h2", {}, dot, h("span", { text: "Codex · VS Code bridge" })), body);
+  function draw() {
+    clear(body);
+    dot.style.background = status.installed ? "#22c55e" : "#f4505e";
+    body.append(
+      h("div", { class: "hint", text:
+        "Show the same permission requests and multiple-choice questions in VS Code and on the island. Answer in either place; the first answer closes the other card.",
+      }),
+      h("div", { class: "row" }, h("label", { text: "VS Code settings" }), h("span", { class: "path", text: status.settingsPath })),
+      h("div", { class: "row" }, h("label", { text: "Official Codex" }), h("span", { class: "path", text: status.codexPath ?? "Not found" })),
+      h("div", { class: "hint", text:
+        "This sets chatgpt.cliExecutable to Coucou's local bridge, which starts the official Codex from your installed extension. Keep the hooks above installed for session activity. Reload VS Code after enabling or disabling the bridge.",
+      }),
+    );
+    const enable = h("button", { class: "primary", text: status.installed ? "Reinstall VS Code bridge…" : "Enable VS Code bridge…", onclick: () => void preview(true) });
+    enable.disabled = !status.ready;
+    const actions = h("div", { class: "row" }, enable);
+    if (status.installed) actions.append(h("button", { class: "danger", text: "Disable bridge…", onclick: () => void preview(false) }));
+    body.append(actions);
+  }
+  async function preview(install: boolean) {
+    try {
+      const plan = await Bridge.codexVSCodePreview(install);
+      if (!plan) return;
+      clear(body);
+      body.append(h("div", { class: "hint", text: "Only the Codex executable setting changes. Comments and your other VS Code settings are preserved. A backup is saved before writing." }), renderDiff(plan.diff));
+      const confirm = h("button", { class: install ? "primary" : "danger", text: "Back up and write" });
+      confirm.addEventListener("click", async () => {
+        confirm.disabled = true;
+        try {
+          const backup = await Bridge.codexVSCodeApply(install, plan.fingerprint);
+          clear(body);
+          body.append(h("div", { class: "notice ok", text: `Saved. Backup: ${backup}. Reload VS Code (Developer: Reload Window) to use the ${install ? "bridge" : "standard Codex executable"}.` }));
+          const fresh = await Bridge.codexVSCodeStatus();
+          if (fresh) status = fresh;
+          body.append(h("button", { text: "Back", onclick: draw }));
+        } catch (err) { confirm.disabled = false; body.append(h("div", { class: "notice err", text: String(err) })); }
+      });
+      body.append(h("div", { class: "row" }, confirm, h("button", { text: "Cancel", onclick: draw })));
+    } catch (err) { body.append(h("div", { class: "notice err", text: String(err) })); }
+  }
   draw();
   return section;
 }
@@ -1000,6 +1050,7 @@ async function main() {
   const opencodePlugin = await Bridge.opencodePluginStatus();
   const clineHooks = await Bridge.clineHooksStatus();
   const codexHooks = await Bridge.codexHooksStatus();
+  const codexVSCode = await Bridge.codexVSCodeStatus();
   const updates = await Bridge.updateStatus();
 
   const keys = [
@@ -1014,6 +1065,7 @@ async function main() {
     h("h1", {}, h("span", { text: "Coucou" }), h("span", { class: "version", text: version })),
     agentHooksSection(status),
     ...(codexHooks ? [agentHooksSection(codexHooks, true)] : []),
+    ...(codexVSCode ? [codexVSCodeSection(codexVSCode)] : []),
     ...(opencodePlugin ? [opencodeSection(opencodePlugin)] : []),
     ...(clineHooks ? [clineSection(clineHooks)] : []),
     ...(shell?.applicable ? [gnomeSection(shell)] : []),

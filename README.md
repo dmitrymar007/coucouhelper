@@ -34,9 +34,10 @@ original project.
   for the whole command), done or failed. Several sessions of one agent are listed
   with their project, state and context use.
 - **Codex, too** — its own pill, sessions, tool activity, completion and
-  Allow/Deny cards. Install from **Settings → Codex → Install hooks…**, review
-  the diff, then trust the changed hooks in Codex `/hooks`. Questions remain
-  in Codex. Imported unlabelled Coucou hooks are recognized by the relay.
+  Allow/Deny cards. Install the hooks from **Settings → Codex**. For native
+  prompts in both VS Code and Coucou, enable **Codex · VS Code bridge** and
+  reload VS Code: permission prompts and multiple-choice questions appear in
+  both places, and the first answer wins. Free-text answers stay in VS Code.
 - **Cline, too** — Cline's tasks in VS Code get their own pill: the prompt, each
   tool, its questions, done or cancelled, cost and tokens. Cline's hooks can't
   approve a tool, so approvals stay in Cline's panel.
@@ -114,6 +115,15 @@ bar.
 - **Claude Code** — **Settings → Claude Code → Install hooks…** You see the exact
   diff for `~/.claude/settings.json` and the path of the dated backup; nothing is
   written until you confirm. Your own hooks are left alone.
+- **Codex** — **Settings → Codex → Install hooks…**, review and trust the hooks
+  in Codex `/hooks`. Then **Settings → Codex · VS Code bridge → Enable VS Code
+  bridge…**, review the diff and confirm. Run **Developer: Reload Window** in
+  VS Code. The bridge uses `chatgpt.cliExecutable` to start the official Codex
+  binary through Coucou; it does not modify the installed extension. Disable
+  it in Coucou and reload VS Code to return to the normal executable. Existing
+  custom executable overrides are not replaced. The bridge currently locates
+  standard `.vscode`, `.vscode-insiders` and `.vscode-oss` extension installs;
+  the settings installer targets VS Code's `Code/User/settings.json`.
 - **opencode** — **Settings → opencode → Install plugin** writes one file,
   `~/.config/opencode/plugin/coucou.js`. Restart opencode.
 - **Cline** — **Settings → Cline → Install hooks** writes one small script per

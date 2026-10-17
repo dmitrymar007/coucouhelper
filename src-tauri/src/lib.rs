@@ -8,6 +8,7 @@ mod opencode_plugin;
 mod cline_hooks;
 mod files;
 mod hooks;
+mod codex_vscode;
 mod integrations;
 mod island;
 mod log;
@@ -303,6 +304,15 @@ fn codex_hooks_apply(app: AppHandle, install: bool, fingerprint: String) -> Resu
     let backup = hooks::write_for(hooks::Agent::Codex, install, &fingerprint)?;
     let _ = app.emit("agent-hooks-changed", ());
     Ok(backup)
+}
+
+#[tauri::command]
+fn codex_vscode_status() -> codex_vscode::Status { codex_vscode::status() }
+#[tauri::command]
+fn codex_vscode_preview(install: bool) -> Result<HookPreview, String> { codex_vscode::preview(install) }
+#[tauri::command]
+fn codex_vscode_apply(install: bool, fingerprint: String) -> Result<String, String> {
+    codex_vscode::apply(install, &fingerprint)
 }
 
 #[tauri::command]
@@ -700,6 +710,9 @@ pub fn run() {
             codex_hooks_status,
             codex_hooks_preview,
             codex_hooks_apply,
+            codex_vscode_status,
+            codex_vscode_preview,
+            codex_vscode_apply,
             approval_decision,
             approval_answer,
             approval_ack,
@@ -784,6 +797,7 @@ pub fn run() {
 
             log::line(format!("--- Coucou {} started ---", env!("CARGO_PKG_VERSION")));
             hooks::ensure_hook_exe(&handle);
+            if let Err(err) = codex_vscode::ensure_launcher() { log::line(format!("Codex bridge launcher: {err}")); }
             socket::start(handle.clone());
             integrations::start(handle.clone());
             update::start(handle.clone());

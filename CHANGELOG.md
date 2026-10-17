@@ -2,6 +2,12 @@
 
 Coucou for Linux.
 
+## 0.3.3 — October 17, 2026
+
+- **Codex · VS Code bridge** mirrors native permission prompts and multiple-choice questions in both VS Code and Coucou. The first answer wins; answering in VS Code closes the island card, and answering on the island resolves the native prompt. Question choices also work with Alt+Shift+1…9.
+- Enable from **Settings → Codex · VS Code bridge → Enable VS Code bridge…**, review the settings diff and confirm the backup/write, then run **Developer: Reload Window** in VS Code. The bridge starts the official Codex binary from the installed extension and uses its existing account, permissions and policy checks. Keep the Codex hooks installed for activity; their permission handler yields only inside the bridge.
+- The setting change preserves other VS Code settings and JSONC comments, refuses an existing custom executable override, and can be disabled from Coucou. Without Coucou, native VS Code prompts remain available. Free-text and secret questions are answered in VS Code.
+
 ## 0.3.2 — October 17, 2026
 
 - Codex gets its own persistent pill, session list, activity and Allow/Deny cards. **Settings → Codex → Install hooks…** previews the diff and backs up `~/.codex/hooks.json` (or `$CODEX_HOME/hooks.json`); review and trust the hooks in Codex `/hooks` afterwards. Questions remain in Codex.
