@@ -111,6 +111,7 @@ export interface HookPayload {
   coucou_agent?: string;
   /** Native App Server bridge can return typed question answers. */
   coucou_transport?: string;
+  coucou_async?: boolean;
   /** Linux relay: the session's ancestor processes, nearest first. */
   ancestor_pids?: unknown;
   /** On Stop: what the session has cost (opencode) and the context its last
@@ -245,12 +246,12 @@ function settledElsewhere(island: Island, name: string, payload: HookPayload) {
     clearApproval(island, a.agentId);
   }
   const q = State.pendingQuestion;
-  if (q && q.sessionId === sid && (turnOver || (after && payload.tool_name === "AskUserQuestion"))) {
+  if (q && !q.async && q.sessionId === sid && (turnOver || (after && payload.tool_name === "AskUserQuestion"))) {
     void Bridge.approvalDecline(q.requestId);
     clearQuestion(island, q.agentId);
   }
   for (const c of [...State.cardQueue]) {
-    if (c.payload.session_id !== sid) continue;
+    if (c.payload.session_id !== sid || c.payload.coucou_async) continue;
     const tool = c.payload.tool_name ?? "Tool";
     const same = tool === "AskUserQuestion"
       ? payload.tool_name === "AskUserQuestion"
@@ -452,6 +453,7 @@ function presentCard(island: Island, card: QueuedCard): boolean {
     }
     State.pendingQuestion = {
       requestId, agentId, sessionId: payload.session_id ?? "", questions, index: 0, answers: {}, picked: [],
+      async: payload.coucou_async === true,
     };
     void Bridge.approvalAck(requestId);
     State.updateTask(agentId, "question");
@@ -631,6 +633,7 @@ function handleHook(island: Island, payload: HookPayload) {
     }
 
     case "Stop":
+      if (State.pendingQuestion?.agentId === agentId && State.pendingQuestion.async) break;
       State.updateTask(agentId, "finished");
       if (payload.message) State.appendStep(agentId, payload.message.slice(0, 60));
       Sound.play("finish");
@@ -739,6 +742,10 @@ function noteSession(
       }
       break;
     case "Stop":
+      if (State.pendingQuestion?.async && State.pendingQuestion.sessionId === sid) {
+        State.noteSession(agentId, sid, { ...where, ...spent, state: "question", step: "Waiting for you" });
+        break;
+      }
       State.noteSession(agentId, sid, { ...where, ...spent, state: "finished", step: payload.message?.slice(0, 80) || "Done" });
       break;
     case "StopFailure":

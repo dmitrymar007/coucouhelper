@@ -62,6 +62,16 @@ Claude Code's two interfaces, enable **Codex · VS Code bridge** in Settings:
   first response is sent once; late competing responses are ignored. Closing
   the socket removes the other island card through `approval-gone`; App Server's
   `serverRequest/resolved` clears the native prompt after an island answer.
+- `hook/src/codex_async.rs` also supports async `agentMessage.questions` on
+  `item/started` / `item/completed`. These are not server requests: choices are
+  answered through `turn/start` with the official UI's structured
+  `<send_user_message_question_reply>` user input. Question IDs are the JSON
+  tuple `["request_user_input_async", itemId, index]`. Bridge-owned RPC responses
+  are consumed locally; competing native submissions get the real upstream
+  acknowledgement without sending the answer twice. Native userMessage
+  notifications cancel cards even when another client answered.
+- Async cards additionally carry `coucou_async: true`: they survive Stop and
+  are cancelled by the bridge's socket closure or the existing card timeout.
 - Questions carry `coucou_transport: "codex-app-server"`; only this transport
   enables Codex's `AskUserQuestion` cards. The bridge translates question text
   back to question IDs and validates selected labels against original options.

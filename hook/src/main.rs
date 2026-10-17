@@ -39,6 +39,7 @@ const MAX_FIELD_LEN: usize = 2_000;
 mod cline;
 mod codex;
 mod codex_binary;
+mod codex_async;
 mod codex_proxy;
 mod unix;
 use unix::{ancestor_pids, connect};

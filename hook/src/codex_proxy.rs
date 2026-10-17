@@ -153,14 +153,40 @@ fn pump(
     let mut generation = 0;
     let mut cwds: HashMap<String, String> = HashMap::new();
     let mut file_changes: HashMap<String, Value> = HashMap::new();
+    let mut async_seen = HashSet::new();
+    let mut async_order = VecDeque::new();
+    let mut async_replies = crate::codex_async::Replies::default();
     while let Ok(event) = rx.recv() {
         match event {
             Event::Server(line) => {
-                // Forward first, so connection attempts never delay VS Code.
+                let parsed = serde_json::from_slice::<Value>(&line).ok();
+                if let Some(msg) = &parsed {
+                    if let Some(acks) = async_replies.response(msg) {
+                        for ack in acks {
+                            write_line(&mut parent, format!("{ack}\n").as_bytes())?;
+                        }
+                        continue;
+                    }
+                }
+                // Native messages arrive before any island connection attempt.
                 write_line(&mut parent, &line)?;
-                let Ok(msg) = serde_json::from_slice::<Value>(&line) else {
-                    continue;
-                };
+                let Some(msg) = parsed else { continue };
+                if let Some(groups) = crate::codex_async::notification_reply_groups(&msg) {
+                    for group in groups {
+                        pending.remove(&group);
+                    }
+                }
+                if matches!(
+                    msg["method"].as_str(),
+                    Some("thread/closed" | "thread/archived" | "thread/deleted")
+                ) {
+                    if let Some(thread) = msg["params"]["threadId"].as_str() {
+                        pending.retain(|_, p| {
+                            p.request["params"]["threadId"].as_str() != Some(thread)
+                        });
+                        cwds.remove(thread);
+                    }
+                }
                 if let Some(thread) = msg
                     .pointer("/params/thread")
                     .or_else(|| msg.pointer("/result/thread"))
@@ -193,14 +219,35 @@ fn pump(
                     pending.remove(&msg["params"]["requestId"].to_string());
                     continue;
                 }
-                if !msg
-                    .get("id")
-                    .is_some_and(|id| id.is_string() || id.is_number())
-                {
-                    continue;
-                }
-                let key = msg["id"].to_string();
+                let request = if let Some(request) = crate::codex_async::request(&msg) {
+                    let key = request["id"].as_str().unwrap().to_string();
+                    if !async_seen.insert(key.clone()) {
+                        continue;
+                    }
+                    async_order.push_back(key);
+                    if async_order.len() > 256 {
+                        if let Some(old) = async_order.pop_front() {
+                            async_seen.remove(&old);
+                        }
+                    }
+                    request
+                } else {
+                    if msg.get("method").is_none()
+                        || !msg
+                            .get("id")
+                            .is_some_and(|id| id.is_string() || id.is_number())
+                    {
+                        continue;
+                    }
+                    msg
+                };
+                let key = if request["coucou_async"] == true {
+                    request["id"].as_str().unwrap().to_string()
+                } else {
+                    request["id"].to_string()
+                };
                 answered.remove(&key);
+                let msg = request;
                 let cwd = msg
                     .pointer("/params/cwd")
                     .and_then(Value::as_str)
@@ -235,6 +282,17 @@ fn pump(
             }
             Event::Client(line) => {
                 if let Ok(msg) = serde_json::from_slice::<Value>(&line) {
+                    if let Some(groups) = crate::codex_async::reply_groups(&msg) {
+                        for group in &groups {
+                            pending.remove(group);
+                        }
+                        if let Some(ack) = async_replies.duplicate(&msg, &groups) {
+                            if let Some(ack) = ack {
+                                write_line(&mut parent, format!("{ack}\n").as_bytes())?;
+                            }
+                            continue;
+                        }
+                    }
                     if msg.get("method").is_none()
                         && (msg.get("result").is_some() || msg.get("error").is_some())
                     {
@@ -256,8 +314,18 @@ fn pump(
                 let Some(result) = island_answer(&p.request, &answer) else {
                     continue;
                 };
-                let response = json!({"id":p.request["id"], "result":result});
-                write_line(&mut child, format!("{response}\n").as_bytes())?;
+                if p.request["coucou_async"] == true {
+                    let id = format!("coucou-async-reply-{}-{generation}", std::process::id());
+                    let Some(submission) = crate::codex_async::submission(&p.request, &result, &id)
+                    else {
+                        continue;
+                    };
+                    write_line(&mut child, format!("{submission}\n").as_bytes())?;
+                    async_replies.sent(key.clone(), &id);
+                } else {
+                    let response = json!({"id":p.request["id"], "result":result});
+                    write_line(&mut child, format!("{response}\n").as_bytes())?;
+                }
                 pending.remove(&key);
                 answered.insert(key.clone());
                 order.push_back(key);
@@ -423,6 +491,7 @@ fn island_request(msg: &Value, cwd: &str, changes: Option<&Value>) -> Option<Val
     Some(json!({
         "hook_event_name":"PermissionRequest", "coucou_agent":"codex", "coucou_transport":TRANSPORT,
         "session_id":thread, "cwd":cwd, "tool_name":tool, "tool_input":input,
+        "coucou_async":msg["coucou_async"] == true,
         "ancestor_pids":crate::unix::ancestor_pids()
     }))
 }
@@ -626,5 +695,117 @@ mod tests {
             "threadId":"t","command":"echo hello","availableDecisions":["acceptForSession","decline"]
         }});
         assert!(island_request(&msg, "", None).is_none());
+    }
+    fn async_question() -> Value {
+        json!({"method":"item/completed","params":{"threadId":"t","item":{
+            "type":"agentMessage","id":"call_async","delivery":"async","text":"", "questions":[{"title":"Choose?","options":["A","B"]}]
+        }}})
+    }
+    #[test]
+    fn async_island_answer_becomes_user_input_and_never_a_server_response() {
+        let notification = async_question();
+        let request = crate::codex_async::request(&notification).unwrap();
+        let key = request["id"].as_str().unwrap().to_string();
+        let (tx, rx) = mpsc::sync_channel(256);
+        tx.send(Event::Server(format!("{notification}\n").into_bytes()))
+            .unwrap();
+        tx.send(Event::Answer(
+            key,
+            1,
+            r#"{"answers":{"Choose?":"B"}}"#.into(),
+        ))
+        .unwrap();
+        tx.send(Event::ServerEnd).unwrap();
+        let (mut child, mut parent) = (Vec::new(), Vec::new());
+        pump(&mut child, &mut parent, rx, tx, |payload, _, _, _, _| {
+            assert_eq!(payload["coucou_async"], true);
+            assert_eq!(payload["tool_input"]["questions"][0]["question"], "Choose?");
+        })
+        .unwrap();
+        let submitted: Value = serde_json::from_slice(&child).unwrap();
+        assert_eq!(submitted["method"], "turn/start");
+        assert!(crate::codex_async::reply_groups(&submitted).is_some());
+        assert_eq!(parent, format!("{notification}\n").as_bytes());
+    }
+    #[test]
+    fn native_async_answer_cancels_the_island_and_remains_verbatim() {
+        let notification = async_question();
+        let request = crate::codex_async::request(&notification).unwrap();
+        let key = request["id"].as_str().unwrap().to_string();
+        let validated = island_answer(&request, r#"{"answers":{"Choose?":"A"}}"#).unwrap();
+        let native = crate::codex_async::submission(&request, &validated, "native").unwrap();
+        let native_bytes = format!("{native}\n").into_bytes();
+        let (tx, rx) = mpsc::sync_channel(256);
+        tx.send(Event::Server(format!("{notification}\n").into_bytes()))
+            .unwrap();
+        tx.send(Event::Client(native_bytes.clone())).unwrap();
+        tx.send(Event::Answer(
+            key,
+            1,
+            r#"{"answers":{"Choose?":"B"}}"#.into(),
+        ))
+        .unwrap();
+        tx.send(Event::ServerEnd).unwrap();
+        let (mut child, mut parent) = (Vec::new(), Vec::new());
+        pump(&mut child, &mut parent, rx, tx, |_, _, _, _, _| {}).unwrap();
+        assert_eq!(child, native_bytes);
+    }
+    #[test]
+    fn async_reply_from_another_client_also_closes_the_island_card() {
+        let notification = async_question();
+        let request = crate::codex_async::request(&notification).unwrap();
+        let key = request["id"].as_str().unwrap().to_string();
+        let validated = island_answer(&request, r#"{"answers":{"Choose?":"A"}}"#).unwrap();
+        let native = crate::codex_async::submission(&request, &validated, "native").unwrap();
+        let received = json!({"method":"item/started","params":{"threadId":"t","item":{"type":"userMessage","content":native["params"]["input"]}}});
+        let (tx, rx) = mpsc::sync_channel(256);
+        tx.send(Event::Server(format!("{notification}\n").into_bytes()))
+            .unwrap();
+        tx.send(Event::Server(format!("{received}\n").into_bytes()))
+            .unwrap();
+        tx.send(Event::Answer(
+            key,
+            1,
+            r#"{"answers":{"Choose?":"B"}}"#.into(),
+        ))
+        .unwrap();
+        tx.send(Event::ServerEnd).unwrap();
+        let (mut child, mut parent) = (Vec::new(), Vec::new());
+        pump(&mut child, &mut parent, rx, tx, |_, _, _, _, _| {}).unwrap();
+        assert!(child.is_empty());
+    }
+    #[test]
+    fn async_rpc_ack_is_consumed_and_late_native_submit_gets_the_real_ack() {
+        let notification = async_question();
+        let request = crate::codex_async::request(&notification).unwrap();
+        let key = request["id"].as_str().unwrap().to_string();
+        let validated = island_answer(&request, r#"{"answers":{"Choose?":"A"}}"#).unwrap();
+        let native = crate::codex_async::submission(&request, &validated, "native").unwrap();
+        let ack = json!({"id":format!("coucou-async-reply-{}-1",std::process::id()),"result":{"turn":{"id":"new-turn","status":"inProgress","items":[]}}});
+        let (tx, rx) = mpsc::sync_channel(256);
+        tx.send(Event::Server(format!("{notification}\n").into_bytes()))
+            .unwrap();
+        tx.send(Event::Answer(
+            key,
+            1,
+            r#"{"answers":{"Choose?":"A"}}"#.into(),
+        ))
+        .unwrap();
+        tx.send(Event::Server(format!("{ack}\n").into_bytes()))
+            .unwrap();
+        tx.send(Event::Client(format!("{native}\n").into_bytes()))
+            .unwrap();
+        tx.send(Event::ServerEnd).unwrap();
+        let (mut child, mut parent) = (Vec::new(), Vec::new());
+        pump(&mut child, &mut parent, rx, tx, |_, _, _, _, _| {}).unwrap();
+        assert_eq!(String::from_utf8(child).unwrap().lines().count(), 1);
+        let received: Vec<Value> = String::from_utf8(parent)
+            .unwrap()
+            .lines()
+            .map(|s| serde_json::from_str(s).unwrap())
+            .collect();
+        assert_eq!(received.len(), 2);
+        assert_eq!(received[1]["id"], "native");
+        assert_eq!(received[1]["result"], ack["result"]);
     }
 }

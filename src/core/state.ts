@@ -82,6 +82,8 @@ export interface AgentQuestion {
 
 /** Questions waiting on the island, answered one after the other. */
 export interface QuestionInfo {
+  /** Async Codex questions may outlive the turn that asked them. */
+  async?: boolean;
   requestId: string;
   agentId: string;
   sessionId: string;
@@ -101,6 +103,7 @@ export interface QueuedCard {
   payload: {
     session_id?: string;
     coucou_transport?: string;
+    coucou_async?: boolean;
     tool_name?: string;
     tool_input?: Record<string, unknown>;
   };

@@ -2,6 +2,12 @@
 
 Coucou for Linux.
 
+## 0.3.4 — October 17, 2026
+
+- Fix Codex's asynchronous multiple-choice questions missing from the island. The VS Code bridge now handles typed `agentMessage.questions` notifications as well as blocking `requestUserInput` requests. Island answers use the same structured user reply as the official VS Code UI, without changing model or approval settings.
+- Keep unanswered async questions visible when the agent finishes its turn. A native answer (including one from another client) cancels the island card; competing submissions are acknowledged without delivering the same answer twice.
+- After updating Coucou, run **Developer: Reload Window** in VS Code. An already-enabled bridge does not need to be reconfigured.
+
 ## 0.3.3 — October 17, 2026
 
 - **Codex · VS Code bridge** mirrors native permission prompts and multiple-choice questions in both VS Code and Coucou. The first answer wins; answering in VS Code closes the island card, and answering on the island resolves the native prompt. Question choices also work with Alt+Shift+1…9.
