@@ -44,6 +44,15 @@ approval cards are not yet implemented for most third-party agents. A
 `PermissionRequest` from an external agent is answered immediately with no
 decision, so the relay writes nothing and the agent re-asks in its terminal.
 
+**Exception: Codex.** Settings → Codex → Install hooks previews and backs up
+`~/.codex/hooks.json` (or `$CODEX_HOME/hooks.json`), then merges commands with
+`--agent codex`. Review and trust the changed hooks in Codex `/hooks`. Codex
+has its own persistent `agent_codex` pill and supports Allow/Deny through the
+compatible `PermissionRequest` decision format. Questions stay in Codex:
+its permission hooks cannot return `updatedInput`. The relay also recognizes
+old unlabelled imports by Codex's `turn_id` or rollout transcript filename.
+`Interrupt` finishes the turn; Codex transcripts are not parsed as Claude usage.
+
 **Exception: opencode.** The Coucou plugin for opencode
 (`opencode-plugin/coucou.js`, installed from Settings → opencode) sends
 opencode's `permission.asked` as a `PermissionRequest` with `--agent opencode`,

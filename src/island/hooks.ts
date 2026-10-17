@@ -17,10 +17,14 @@ const CLAUDE_ID = "integration_claude";
  * other agent's request goes back to its terminal, since a Claude Code-shaped
  * answer would mean nothing to it.
  */
-const APPROVAL_AGENTS: ReadonlySet<string> = new Set(["agent_opencode"]);
+const APPROVAL_AGENTS: ReadonlySet<string> = new Set(["agent_opencode", "agent_codex"]);
 
-/** Puts the opencode and Cline pills up when their integration is installed. */
+/** Puts the Codex, opencode and Cline pills up when their integration is installed. */
 export async function showDeclaredAgents() {
+  const codexHooks = await Bridge.codexHooksStatus();
+  const codex = DECLARED_AGENTS.get("agent_codex")!;
+  if (codexHooks?.installed) State.upsertExternalAgent("agent_codex", codex.name, codex.color);
+  else State.removeTask("agent_codex");
   const plugin = await Bridge.opencodePluginStatus();
   const opencode = DECLARED_AGENTS.get("agent_opencode")!;
   if (plugin?.installed) State.upsertExternalAgent("agent_opencode", opencode.name, opencode.color);
@@ -425,6 +429,11 @@ const RELAY_WAIT_MS = 108_000;
  */
 function presentCard(island: Island, card: QueuedCard): boolean {
   const { requestId, agentId, payload } = card;
+  // Codex PermissionRequest cannot carry updatedInput answers.
+  if (agentId === "agent_codex" && payload.tool_name === "AskUserQuestion") {
+    void Bridge.approvalDecline(requestId);
+    return false;
+  }
   // A queued request has already spent part of its relay's wait.
   const left = Math.max(5_000, RELAY_WAIT_MS - (Date.now() - card.arrivedAt));
   if (pendingTimeout != null) window.clearTimeout(pendingTimeout);

@@ -291,6 +291,21 @@ fn hooks_apply(
 }
 
 #[tauri::command]
+fn codex_hooks_status() -> HookStatus { hooks::status_for(hooks::Agent::Codex) }
+
+#[tauri::command]
+fn codex_hooks_preview(install: bool) -> Result<HookPreview, String> {
+    hooks::preview_for(hooks::Agent::Codex, install)
+}
+
+#[tauri::command]
+fn codex_hooks_apply(app: AppHandle, install: bool, fingerprint: String) -> Result<String, String> {
+    let backup = hooks::write_for(hooks::Agent::Codex, install, &fingerprint)?;
+    let _ = app.emit("agent-hooks-changed", ());
+    Ok(backup)
+}
+
+#[tauri::command]
 fn approval_decision(app: AppHandle, request_id: String, decision: String) {
     socket::answer(&app, &request_id, &decision);
 }
@@ -682,6 +697,9 @@ pub fn run() {
             hooks_status,
             hooks_preview,
             hooks_apply,
+            codex_hooks_status,
+            codex_hooks_preview,
+            codex_hooks_apply,
             approval_decision,
             approval_answer,
             approval_ack,

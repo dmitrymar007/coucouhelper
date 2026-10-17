@@ -2,6 +2,11 @@
 
 Coucou for Linux.
 
+## 0.3.2 — October 17, 2026
+
+- Codex gets its own persistent pill, session list, activity and Allow/Deny cards. **Settings → Codex → Install hooks…** previews the diff and backs up `~/.codex/hooks.json` (or `$CODEX_HOME/hooks.json`); review and trust the hooks in Codex `/hooks` afterwards. Questions remain in Codex.
+- Recognize imported Codex hooks without an agent tag instead of showing their turn events as Claude Code. Preserve foreign handlers even when they share a matcher group with Coucou.
+
 ## 0.3.1 — October 8, 2026
 
 - Pick a colour for each pill: **Settings → Pill colours** sets the colour of the Mochi head in the pill (and the pill's tint) for Claude Code, opencode, Cline and every integration. Reset brings back the pill's own colour.

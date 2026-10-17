@@ -68,7 +68,7 @@ function idleCard(task: AgentTask, openSettings: () => void): HTMLElement {
   const ready = isClaude
     ? "Hooks installed · waiting for a session"
     : isAgent
-      ? "Plugin installed · waiting for a session"
+      ? "Integration ready · waiting for a session"
       : "Connected · loading…";
   const label = error ?? (configured ? ready : missing);
   const statusColor = error || !configured ? "#F4505E" : "#22C55E";

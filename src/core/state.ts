@@ -155,6 +155,7 @@ export const INTEGRATION_AGENTS: AgentTask[] = [
  * unknown agent.
  */
 export const DECLARED_AGENTS: ReadonlyMap<string, { name: string; color: string }> = new Map([
+  ["agent_codex", { name: "Codex", color: "#10A37F" }],
   ["agent_opencode", { name: "opencode", color: "#FAB283" }],
   ["agent_cline", { name: "Cline", color: "#A78BFA" }],
 ]);

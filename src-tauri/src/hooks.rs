@@ -1,4 +1,4 @@
-// Claude Code hook installation.
+// Claude Code and Codex hook installation.
 //
 // The rule from CLAUDE.md is strict and is followed to the letter:
 // read ~/.claude/settings.json, take a dated backup, merge without
@@ -52,9 +52,29 @@ pub struct HookPreview {
     pub fingerprint: String,
 }
 
-pub fn settings_path() -> PathBuf {
-    platform::home_dir().join(".claude").join("settings.json")
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Agent { Claude, Codex }
+
+impl Agent {
+    fn settings_path(self) -> PathBuf {
+        let home = if self == Self::Codex {
+            std::env::var_os("CODEX_HOME").filter(|v| !v.is_empty())
+                .map(PathBuf::from).unwrap_or_else(|| platform::home_dir().join(".codex"))
+        } else { platform::home_dir().join(".claude") };
+        home.join(if self == Self::Codex { "hooks.json" } else { "settings.json" })
+    }
+
+    fn events(self) -> &'static [(&'static str, u64)] {
+        if self == Self::Claude { HOOK_EVENTS } else { &[
+            ("SessionStart", 10), ("SessionEnd", 3), ("UserPromptSubmit", 10),
+            ("PreToolUse", 10), ("PostToolUse", 10), ("PermissionRequest", 120),
+            ("Stop", 10), ("Interrupt", 3), ("SubagentStart", 10), ("SubagentStop", 10),
+        ] }
+    }
 }
+
+#[cfg(test)]
+fn settings_path() -> PathBuf { Agent::Claude.settings_path() }
 
 /// Reads `~/.claude/settings.json`.
 ///
@@ -62,8 +82,8 @@ pub fn settings_path() -> PathBuf {
 /// Everything else — a lock held by another process, a permission problem, JSON
 /// we cannot parse — is reported, because the alternative is treating somebody's
 /// unreadable settings as an empty object and then writing that back over them.
-fn read_settings() -> Result<Value, String> {
-    let path = settings_path();
+fn read_settings(agent: Agent) -> Result<Value, String> {
+    let path = agent.settings_path();
     match std::fs::read(&path) {
         Ok(bytes) => parse_settings(&bytes, &path.display().to_string()),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(json!({})),
@@ -94,17 +114,18 @@ fn parse_settings(bytes: &[u8], path: &str) -> Result<Value, String> {
 
 /// The settings as they are, or an empty object when we cannot tell. Only for
 /// read-only paths like `status()`, which must never fail loudly; anything that
-/// writes uses `read_settings()` and surfaces the error instead.
-fn read_settings_lossy() -> Value {
-    read_settings().unwrap_or_else(|_| json!({}))
+/// writes uses `read_settings(agent)` and surfaces the error instead.
+fn read_settings_lossy(agent: Agent) -> Value {
+    read_settings(agent).unwrap_or_else(|_| json!({}))
 }
 
 
 /// Claude Code runs the command through `sh`, which still reads `$`, `` ` ``
 /// and `\` inside double quotes. Single quotes keep the path a path, whatever
 /// the home directory is called.
-fn hook_command(event: &str) -> String {
-    format!("{} {event}", sh_quote(&settings::hook_exe_path().to_string_lossy()))
+fn hook_command(agent: Agent, event: &str) -> String {
+    format!("{}{} {event}", sh_quote(&settings::hook_exe_path().to_string_lossy()),
+        if agent == Agent::Codex { " --agent codex" } else { "" })
 }
 
 /// `s` as one single-quoted shell word: `'` becomes `'\''`, nothing else is
@@ -128,8 +149,19 @@ fn entry_is_ours(entry: &Value) -> bool {
         .unwrap_or(false)
 }
 
+/// A matcher group may mix Coucou with other commands. Remove only our
+/// handlers; preserve the group's matcher, metadata and foreign handlers.
+fn cleaned_entry(entry: &Value) -> Option<Value> {
+    if !entry_is_ours(entry) { return Some(entry.clone()); }
+    let mut kept = entry.clone();
+    let handlers = kept.get_mut("hooks")?.as_array_mut()?;
+    handlers.retain(|h| !h.get("command").and_then(Value::as_str)
+        .is_some_and(|c| c.contains(MARKER)));
+    if handlers.is_empty() { None } else { Some(kept) }
+}
+
 /// Settings with Coucou's hooks added; everything else is left untouched.
-fn merged(existing: &Value) -> Value {
+fn merged_for(agent: Agent, existing: &Value) -> Value {
     let mut root = existing.as_object().cloned().unwrap_or_default();
     let mut hooks = root
         .get("hooks")
@@ -137,17 +169,17 @@ fn merged(existing: &Value) -> Value {
         .cloned()
         .unwrap_or_else(Map::new);
 
-    for (event, timeout) in HOOK_EVENTS {
+    for (event, timeout) in agent.events() {
         let mut list = hooks
             .get(*event)
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
-        list.retain(|entry| !entry_is_ours(entry));
+        list = list.iter().filter_map(cleaned_entry).collect();
         list.push(json!({
             "hooks": [{
                 "type": "command",
-                "command": hook_command(event),
+                "command": hook_command(agent, event),
                 "timeout": timeout,
             }]
         }));
@@ -169,7 +201,7 @@ fn without_ours(existing: &Value) -> Value {
         match value.as_array() {
             Some(list) => {
                 let kept: Vec<Value> =
-                    list.iter().filter(|e| !entry_is_ours(e)).cloned().collect();
+                    list.iter().filter_map(cleaned_entry).collect();
                 if !kept.is_empty() {
                     out.insert(event, Value::Array(kept));
                 }
@@ -201,9 +233,9 @@ fn stamp() -> String {
     )
 }
 
-fn backup_path() -> PathBuf {
-    let p = settings_path();
-    p.with_file_name(format!("settings.json.bak-{}", stamp()))
+fn backup_path(agent: Agent) -> PathBuf {
+    let p = agent.settings_path();
+    p.with_file_name(format!("{}.bak-{}", p.file_name().unwrap().to_string_lossy(), stamp()))
 }
 
 /// Identifies the exact bytes a preview was computed from. FNV-1a is plenty:
@@ -217,8 +249,8 @@ fn fingerprint(bytes: &[u8]) -> String {
     format!("{hash:016x}")
 }
 
-fn current_fingerprint() -> String {
-    match std::fs::read(settings_path()) {
+fn current_fingerprint(agent: Agent) -> String {
+    match std::fs::read(agent.settings_path()) {
         Ok(bytes) => fingerprint(&bytes),
         Err(_) => fingerprint(b""),
     }
@@ -226,8 +258,14 @@ fn current_fingerprint() -> String {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-pub fn status() -> HookStatus {
-    let current = read_settings_lossy();
+pub fn status() -> HookStatus { status_for(Agent::Claude) }
+pub fn preview(install: bool) -> Result<HookPreview, String> { preview_for(Agent::Claude, install) }
+pub fn write(install: bool, fingerprint: &str) -> Result<String, String> { write_for(Agent::Claude, install, fingerprint) }
+#[cfg(test)]
+fn merged(existing: &Value) -> Value { merged_for(Agent::Claude, existing) }
+
+pub fn status_for(agent: Agent) -> HookStatus {
+    let current = read_settings_lossy(agent);
     let installed = current
         .get("hooks")
         .and_then(Value::as_object)
@@ -242,20 +280,20 @@ pub fn status() -> HookStatus {
     let hook_path = settings::hook_exe_path();
     HookStatus {
         installed,
-        settings_path: settings_path().to_string_lossy().to_string(),
+        settings_path: agent.settings_path().to_string_lossy().to_string(),
         hook_ready: hook_path.exists(),
         hook_path: hook_path.to_string_lossy().to_string(),
     }
 }
 
-pub fn preview(install: bool) -> Result<HookPreview, String> {
-    let current = read_settings()?;
-    let next = if install { merged(&current) } else { without_ours(&current) };
+pub fn preview_for(agent: Agent, install: bool) -> Result<HookPreview, String> {
+    let current = read_settings(agent)?;
+    let next = if install { merged_for(agent, &current) } else { without_ours(&current) };
     Ok(HookPreview {
         diff: unified_diff(&pretty(&current), &pretty(&next)),
-        backup: backup_path().to_string_lossy().to_string(),
-        settings_path: settings_path().to_string_lossy().to_string(),
-        fingerprint: current_fingerprint(),
+        backup: backup_path(agent).to_string_lossy().to_string(),
+        settings_path: agent.settings_path().to_string_lossy().to_string(),
+        fingerprint: current_fingerprint(agent),
     })
 }
 
@@ -265,27 +303,27 @@ pub fn preview(install: bool) -> Result<HookPreview, String> {
 /// in between — another tool, another window, the user's own editor — we stop
 /// and make them look at a fresh diff, because the only thing worse than not
 /// installing the hooks is silently reverting somebody else's edit.
-pub fn write(install: bool, fingerprint: &str) -> Result<String, String> {
-    let path = settings_path();
+pub fn write_for(agent: Agent, install: bool, fingerprint: &str) -> Result<String, String> {
+    let path = agent.settings_path();
     let dir = path.parent().unwrap_or(Path::new("."));
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
 
     // Read before the backup: an unreadable file must abort before we touch
     // anything at all.
-    let current = read_settings()?;
-    if current_fingerprint() != fingerprint {
+    let current = read_settings(agent)?;
+    if current_fingerprint(agent) != fingerprint {
         return Err(format!(
             "{} changed since the preview. Nothing was written — review the new diff.",
             path.display()
         ));
     }
 
-    let backup = backup_path();
+    let backup = backup_path(agent);
     if path.exists() {
         std::fs::copy(&path, &backup).map_err(|e| format!("backup failed: {e}"))?;
     }
 
-    let next = if install { merged(&current) } else { without_ours(&current) };
+    let next = if install { merged_for(agent, &current) } else { without_ours(&current) };
     let mut text = pretty(&next);
     text.push('\n');
 
@@ -541,6 +579,31 @@ mod tests {
     }
 
     #[test]
+    fn codex_migrates_unlabelled_hooks_and_preserves_mixed_groups() {
+        let existing = json!({"description":"mine", "hooks": {"PreToolUse":[{
+            "matcher":"Bash", "hooks":[
+                {"type":"command", "command":"'/old/coucou-hook' PreToolUse"},
+                {"type":"command", "command":"my-security-check"}
+            ]
+        }]}});
+        let after = merged_for(Agent::Codex, &existing);
+        assert_eq!(after["description"], "mine");
+        assert_eq!(after["hooks"]["PreToolUse"][0]["matcher"], "Bash");
+        assert_eq!(after["hooks"]["PreToolUse"][0]["hooks"].as_array().unwrap().len(), 1);
+        assert_eq!(after["hooks"]["PreToolUse"][0]["hooks"][0]["command"], "my-security-check");
+        for (event, timeout) in Agent::Codex.events() {
+            let list = after["hooks"][*event].as_array().unwrap();
+            let h = &list.last().unwrap()["hooks"][0];
+            assert!(h["command"].as_str().unwrap().ends_with(&format!(" --agent codex {event}")));
+            assert_eq!(h["timeout"], *timeout);
+        }
+        assert!(after["hooks"].get("Notification").is_none());
+        assert_eq!(merged_for(Agent::Codex, &after), after, "reinstall is idempotent");
+        let cleaned = without_ours(&after);
+        assert_eq!(cleaned["hooks"]["PreToolUse"][0]["hooks"][0]["command"], "my-security-check");
+    }
+
+    #[test]
     fn a_fingerprint_notices_any_change() {
         assert_eq!(fingerprint(b"{}"), fingerprint(b"{}"));
         assert_ne!(fingerprint(b"{}"), fingerprint(b"{ }"));
@@ -634,6 +697,23 @@ mod tests {
         assert!(write(true, "whatever").is_err());
         assert_eq!(std::fs::read(&path).unwrap(), b"{ broken");
 
+        let codex_path = tmp.join(".codex/hooks.json");
+        let previous_codex_home = std::env::var_os("CODEX_HOME");
+        std::env::set_var("CODEX_HOME", tmp.join(".codex"));
+        assert_eq!(Agent::Codex.settings_path(), codex_path);
+        let plan = preview_for(Agent::Codex, true).unwrap();
+        write_for(Agent::Codex, true, &plan.fingerprint).unwrap();
+        assert!(status_for(Agent::Codex).installed);
+        let codex_bytes = std::fs::read(&codex_path).unwrap();
+        let plan = preview_for(Agent::Codex, false).unwrap();
+        let backup = write_for(Agent::Codex, false, &plan.fingerprint).unwrap();
+        assert_eq!(std::fs::read(backup).unwrap(), codex_bytes);
+        assert!(!status_for(Agent::Codex).installed);
+        assert_eq!(std::fs::read(&path).unwrap(), b"{ broken", "Codex never writes Claude settings");
+        match previous_codex_home {
+            Some(v) => std::env::set_var("CODEX_HOME", v),
+            None => std::env::remove_var("CODEX_HOME"),
+        }
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }

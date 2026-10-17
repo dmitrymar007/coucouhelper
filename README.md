@@ -33,6 +33,10 @@ original project.
   each tool it runs (in the agent's own words when it gives some; hover or click
   for the whole command), done or failed. Several sessions of one agent are listed
   with their project, state and context use.
+- **Codex, too** — its own pill, sessions, tool activity, completion and
+  Allow/Deny cards. Install from **Settings → Codex → Install hooks…**, review
+  the diff, then trust the changed hooks in Codex `/hooks`. Questions remain
+  in Codex. Imported unlabelled Coucou hooks are recognized by the relay.
 - **Cline, too** — Cline's tasks in VS Code get their own pill: the prompt, each
   tool, its questions, done or cancelled, cost and tokens. Cline's hooks can't
   approve a tool, so approvals stay in Cline's panel.

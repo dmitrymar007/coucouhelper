@@ -37,6 +37,7 @@ const MAX_FIELD_LEN: usize = 2_000;
 
 
 mod cline;
+mod codex;
 mod unix;
 use unix::{ancestor_pids, connect};
 
@@ -50,6 +51,8 @@ fn main() {
     // Claude Code takes one string per question (several answers joined by
     // ", ", as its own picker writes them); opencode's plugin takes lists.
     let lists = agent_arg().as_deref() == Some("opencode");
+    let from_codex = serde_json::from_str::<serde_json::Value>(&payload).ok()
+        .is_some_and(|v| v["coucou_agent"] == "codex");
 
     let waits_for_answer = event == "PermissionRequest";
     let budget = if waits_for_answer { DECISION_BUDGET } else { FIRE_AND_FORGET_BUDGET };
@@ -64,7 +67,7 @@ fn main() {
     });
 
     if let Ok(Some(decision)) = rx.recv_timeout(budget) {
-        if let Some(json) = decision_json(&decision, questions.as_ref(), lists) {
+        if let Some(json) = decision_json(&decision, if from_codex { None } else { questions.as_ref() }, lists) {
             let mut out = std::io::stdout();
             let _ = writeln!(out, "{json}");
             let _ = out.flush();
@@ -160,6 +163,7 @@ fn read_event() -> Option<(String, String, Option<serde_json::Value>)> {
         }
         payload = serde_json::Value::Object(event);
     }
+    let inferred_codex = codex::is_codex(&payload);
     let map = payload.as_object_mut()?;
 
     // Parse argv: "coucou-hook.exe [--agent <name>] [<EventName>]"
@@ -182,6 +186,11 @@ fn read_event() -> Option<(String, String, Option<serde_json::Value>)> {
     if !agent.is_empty() {
         map.insert("coucou_agent".into(), serde_json::Value::String(agent));
     }
+    if agent_arg().is_none() && !map.contains_key("coucou_agent") && inferred_codex {
+        map.insert("coucou_agent".into(), "codex".into());
+    }
+    let from_codex = map.get("coucou_agent").and_then(|v| v.as_str()) == Some("codex");
+    if from_codex { codex::normalize(map); }
     let event = map
         .get("hook_event_name")
         .and_then(|v| v.as_str())
@@ -193,7 +202,7 @@ fn read_event() -> Option<(String, String, Option<serde_json::Value>)> {
     // How full the model's context is, and what the turn just finished used:
     // from the session's own transcript, on Stop only. The transcript itself
     // never leaves this process.
-    if event == "Stop" && !map.contains_key("tokens") {
+    if event == "Stop" && !from_codex && !map.contains_key("tokens") {
         let text = map
             .get("transcript_path")
             .and_then(|v| v.as_str())
