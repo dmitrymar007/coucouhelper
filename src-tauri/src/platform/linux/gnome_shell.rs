@@ -10,7 +10,7 @@
 // Everything here runs on the GTK main thread, where gio delivers the D-Bus
 // callbacks; the public functions hop there from wherever they are called.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -65,6 +65,8 @@ thread_local! {
     static LINK: RefCell<Option<Link>> = const { RefCell::new(None) };
     /// Where events go: set by `start`, on the main thread.
     static ON_EVENT: RefCell<Option<Rc<dyn Fn(Event)>>> = const { RefCell::new(None) };
+    /// Keep the settings subscription alive even without an island registration.
+    static PREFERENCES: RefCell<Option<gio::Settings>> = const { RefCell::new(None) };
 }
 
 fn emit(event: Event) {
@@ -108,18 +110,53 @@ pub fn on_bus() -> bool {
 /// decided there was no extension and fell back to the window below the bar.
 pub fn expected() -> bool {
     let Some(settings) = shell_settings() else { return false };
-    if !enabled_list(&settings).iter().any(|u| u == UUID) {
-        return false;
-    }
-    if install_dir().join("metadata.json").is_file() {
-        return !settings.boolean("disable-user-extensions");
-    }
-    std::path::Path::new(PACKAGED_DIR).join("metadata.json").is_file()
+    installed() && enabled(&settings) && !switched_off(&settings)
 }
 
-/// Follows the extension for the rest of the run. Main thread only.
-pub fn start(on_event: impl Fn(Event) + 'static) {
+/// An explicit switch off must also prevent the desktop autostart from
+/// resurrecting the app. An extension not yet configured is different: the
+/// first run still needs to offer installation in Settings.
+pub fn disabled() -> bool {
+    installed() && shell_settings().is_some_and(|settings| switched_off(&settings))
+}
+
+fn watch_disabled(settings: &gio::Settings, installed: bool, on_disabled: impl Fn() + 'static) {
+    let was_enabled = Cell::new(enabled(settings));
+    let stopped = Cell::new(false);
+    settings.connect_changed(None, move |settings, key| {
+        if !matches!(key, "enabled-extensions" | "disabled-extensions" | "disable-user-extensions") {
+            return;
+        }
+        let enabled = enabled(settings);
+        let removed = was_enabled.replace(enabled) && !enabled;
+        if (removed || (installed && switched_off(settings))) && !stopped.replace(true) {
+            on_disabled();
+        }
+    });
+    // GSettings only emits `changed` for keys read after connecting a handler.
+    for key in ["enabled-extensions", "disabled-extensions", "disable-user-extensions"] {
+        let _ = settings.value(key);
+    }
+}
+
+/// Follows the user's switch independently of the window backend. Merely
+/// losing the D-Bus name (screen lock, Shell restart) is not a switch off.
+/// Main thread only.
+pub fn start(register_island: bool, on_event: impl Fn(Event) + 'static) {
     ON_EVENT.with(|h| *h.borrow_mut() = Some(Rc::new(on_event)));
+    if let Some(settings) = shell_settings() {
+        watch_disabled(&settings, installed(), || emit(Event::Disabled));
+        // Close the race between the pre-GTK launch check and subscribing.
+        let disabled = installed() && switched_off(&settings);
+        PREFERENCES.with(|p| *p.borrow_mut() = Some(settings));
+        if disabled {
+            emit(Event::Disabled);
+            return;
+        }
+    }
+    if !register_island {
+        return;
+    }
     // gio wants thread-safe closures, so these capture nothing; it calls them
     // back on this thread's main context, where ON_EVENT lives.
     let watcher = gio::bus_watch_name(
@@ -386,6 +423,49 @@ fn enabled_list(settings: &gio::Settings) -> Vec<String> {
     settings.strv("enabled-extensions").iter().map(|s| s.to_string()).collect()
 }
 
+fn disabled_list(settings: &gio::Settings) -> Vec<String> {
+    settings.strv("disabled-extensions").iter().map(|s| s.to_string()).collect()
+}
+
+fn enabled(settings: &gio::Settings) -> bool {
+    enabled_list(settings).iter().any(|u| u == UUID)
+        && !disabled_list(settings).iter().any(|u| u == UUID)
+}
+
+fn switched_off(settings: &gio::Settings) -> bool {
+    disabled_list(settings).iter().any(|u| u == UUID)
+        || settings.boolean("disable-user-extensions")
+}
+
+fn installed() -> bool {
+    install_dir().join("metadata.json").is_file()
+        || std::path::Path::new(PACKAGED_DIR).join("metadata.json").is_file()
+}
+
+/// GNOME's explicit disabled list takes precedence over its enabled list.
+/// Change both together, preserving every other extension and the global switch.
+fn set_enabled(settings: &gio::Settings, on: bool) -> Result<(), String> {
+    let mut enabled = enabled_list(settings);
+    let mut disabled = disabled_list(settings);
+    enabled.retain(|u| u != UUID);
+    disabled.retain(|u| u != UUID);
+    if on {
+        enabled.push(UUID.to_string());
+    } else {
+        disabled.push(UUID.to_string());
+    }
+    settings.delay();
+    let result = settings.set_strv("enabled-extensions", enabled)
+        .and_then(|()| settings.set_strv("disabled-extensions", disabled));
+    if let Err(err) = result {
+        settings.revert();
+        return Err(err.to_string());
+    }
+    settings.apply();
+    gio::Settings::sync();
+    Ok(())
+}
+
 pub fn status() -> crate::platform::ShellExtensionStatus {
     let Some(settings) = shell_settings() else { return Default::default() };
     let user_dir = install_dir();
@@ -403,7 +483,7 @@ pub fn status() -> crate::platform::ShellExtensionStatus {
         installed: user_copy || packaged_copy,
         packaged: packaged_copy && matches_bundled(packaged_dir),
         up_to_date,
-        enabled: enabled_list(&settings).iter().any(|u| u == UUID),
+        enabled: enabled(&settings),
         user_extensions_disabled: settings.boolean("disable-user-extensions"),
         active: active(),
     }
@@ -427,13 +507,7 @@ pub fn install() -> Result<(), String> {
             std::fs::write(dir.join(name), contents).map_err(|e| format!("{name}: {e}"))?;
         }
     }
-    let mut list = enabled_list(&settings);
-    if !list.iter().any(|u| u == UUID) {
-        list.push(UUID.to_string());
-        let refs: Vec<&str> = list.iter().map(String::as_str).collect();
-        settings.set_strv("enabled-extensions", refs.as_slice()).map_err(|e| e.to_string())?;
-        gio::Settings::sync();
-    }
+    set_enabled(&settings, true)?;
     crate::log::line("GNOME extension installed");
     Ok(())
 }
@@ -460,14 +534,128 @@ pub fn drop_stale_user_copy() {
 /// copy. The package's copy stays, turned off, until the package goes.
 pub fn remove() -> Result<(), String> {
     let settings = shell_settings().ok_or("This is not a GNOME session.")?;
-    let list: Vec<String> = enabled_list(&settings).into_iter().filter(|u| u != UUID).collect();
-    let refs: Vec<&str> = list.iter().map(String::as_str).collect();
-    settings.set_strv("enabled-extensions", refs.as_slice()).map_err(|e| e.to_string())?;
-    gio::Settings::sync();
     let dir = install_dir();
     if dir.ends_with(UUID) && dir.is_dir() {
         std::fs::remove_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
+    set_enabled(&settings, false)?;
     crate::log::line("GNOME extension removed");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::OnceLock;
+
+    /// An isolated schema and memory backend: never read or change the user's
+    /// actual GNOME preferences, and also work on CI without GNOME installed.
+    fn with_preferences(test: impl FnOnce(gio::Settings)) {
+        // GSettings delivers notifications on the creating thread's context.
+        // Own a separate one for each test, just as GTK owns the app's context.
+        glib::MainContext::new().with_thread_default(|| test(preferences())).unwrap();
+    }
+
+    fn preferences() -> gio::Settings {
+        static SCHEMAS: OnceLock<std::path::PathBuf> = OnceLock::new();
+        let dir = SCHEMAS.get_or_init(|| {
+            let dir = std::env::temp_dir().join(format!("coucou-shell-schema-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+            let output = std::process::Command::new("glib-compile-schemas")
+                .arg("--strict").arg("--targetdir").arg(&dir).arg(fixtures)
+                .output().expect("glib-compile-schemas (provided with GLib)");
+            assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+            dir
+        });
+        let source = gio::SettingsSchemaSource::from_directory(dir, None::<&gio::SettingsSchemaSource>, false).unwrap();
+        let schema = source.lookup("org.gnome.shell", false).unwrap();
+        gio::Settings::new_full(&schema, Some(&gio::memory_settings_backend_new()), None)
+    }
+
+    #[test]
+    fn explicit_off_overrides_enabled_but_first_run_is_allowed() {
+        with_preferences(|settings| {
+            assert!(!enabled(&settings));
+            assert!(!switched_off(&settings)); // First-time installation must remain available.
+            settings.set_strv("enabled-extensions", [UUID]).unwrap();
+            assert!(enabled(&settings));
+            assert!(!switched_off(&settings));
+            settings.set_strv("disabled-extensions", [UUID]).unwrap();
+            assert!(!enabled(&settings));
+            assert!(switched_off(&settings)); // Disabled wins, even at the next login.
+            settings.set_strv("disabled-extensions", [] as [&str; 0]).unwrap();
+            settings.set_boolean("disable-user-extensions", true).unwrap();
+            assert!(switched_off(&settings)); // Includes the packaged copy, not just ~/.local.
+        });
+    }
+
+    #[test]
+    fn turning_on_again_clears_only_our_disabled_entry() {
+        with_preferences(|settings| {
+            settings.set_strv("enabled-extensions", ["other-enabled"]).unwrap();
+            settings.set_strv("disabled-extensions", ["other-disabled", UUID]).unwrap();
+            set_enabled(&settings, true).unwrap();
+            assert!(enabled(&settings));
+            assert!(!switched_off(&settings));
+            assert_eq!(enabled_list(&settings), ["other-enabled", UUID]);
+            assert_eq!(disabled_list(&settings), ["other-disabled"]);
+            set_enabled(&settings, false).unwrap();
+            assert!(!enabled(&settings));
+            assert!(switched_off(&settings));
+            assert_eq!(enabled_list(&settings), ["other-enabled"]);
+            assert_eq!(disabled_list(&settings), ["other-disabled", UUID]);
+            settings.set_boolean("disable-user-extensions", true).unwrap();
+            set_enabled(&settings, true).unwrap();
+            assert!(settings.boolean("disable-user-extensions"));
+        });
+    }
+
+    #[test]
+    fn preference_changes_stop_the_app_once_even_without_registration() {
+        for key in ["enabled-extensions", "disabled-extensions", "disable-user-extensions"] {
+            with_preferences(|settings| {
+                settings.set_strv("enabled-extensions", [UUID]).unwrap();
+                let stops = Rc::new(Cell::new(0));
+                let observed = stops.clone();
+                watch_disabled(&settings, true, move || observed.set(observed.get() + 1));
+                // Another extension's switch must not stop Coucou.
+                settings.set_strv("disabled-extensions", ["other-disabled"]).unwrap();
+                assert_eq!(stops.get(), 0);
+                match key {
+                    "enabled-extensions" => settings.set_strv(key, [] as [&str; 0]).unwrap(),
+                    "disabled-extensions" => settings.set_strv(key, ["other-disabled", UUID]).unwrap(),
+                    _ => settings.set_boolean(key, true).unwrap(),
+                }
+                assert_eq!(stops.get(), 1, "{key}");
+                // GNOME may update both lists; one switch must request only one exit.
+                set_enabled(&settings, false).unwrap();
+                assert_eq!(stops.get(), 1, "{key}");
+            });
+        }
+    }
+
+    #[test]
+    fn screen_lock_disconnect_does_not_request_exit() {
+        with_preferences(|settings| {
+            set_enabled(&settings, true).unwrap();
+            let exits = Rc::new(Cell::new(0));
+            let observed = exits.clone();
+            ON_EVENT.with(|h| *h.borrow_mut() = Some(Rc::new(move |event| {
+                if matches!(event, Event::Disabled) {
+                    observed.set(observed.get() + 1);
+                }
+            })));
+            watch_disabled(&settings, true, || emit(Event::Disabled));
+            // Same path as the name-vanished callback, while GNOME preferences
+            // stay enabled during lock/unlock (or a Shell restart).
+            forget();
+            emit(Event::Active(false));
+            emit(Event::Active(true));
+            assert_eq!(exits.get(), 0);
+            set_enabled(&settings, false).unwrap();
+            assert_eq!(exits.get(), 1);
+            ON_EVENT.with(|h| *h.borrow_mut() = None);
+        });
+    }
 }

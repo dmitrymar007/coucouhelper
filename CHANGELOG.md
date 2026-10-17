@@ -2,6 +2,30 @@
 
 Coucou for Linux.
 
+## 0.3.5 — October 17, 2026
+
+- Turning off the Coucou extension in GNOME now quits the entire application, including its tray icon and island chat backends. While the installed extension is explicitly disabled, Coucou exits before creating windows or starting services, including when launched at login.
+- Screen lock and temporary loss of the GNOME Shell connection do not quit Coucou. The application follows GNOME's persistent extension preferences independently of the island's window backend.
+- Honor GNOME's disabled-extension list, including when it overrides the enabled list. Turning the extension on from Coucou Settings clears only Coucou's disabled entry and preserves every other extension and the global switch.
+- To use Coucou again after switching it off, enable the extension in GNOME Extensions, then launch Coucou. First-time setup remains available before the extension is configured.
+
+## 0.3.4 — October 17, 2026
+
+- Fix Codex's asynchronous multiple-choice questions missing from the island. The VS Code bridge now handles typed `agentMessage.questions` notifications as well as blocking `requestUserInput` requests. Island answers use the same structured user reply as the official VS Code UI, without changing model or approval settings.
+- Keep unanswered async questions visible when the agent finishes its turn. A native answer (including one from another client) cancels the island card; competing submissions are acknowledged without delivering the same answer twice.
+- After updating Coucou, run **Developer: Reload Window** in VS Code. An already-enabled bridge does not need to be reconfigured.
+
+## 0.3.3 — October 17, 2026
+
+- **Codex · VS Code bridge** mirrors native permission prompts and multiple-choice questions in both VS Code and Coucou. The first answer wins; answering in VS Code closes the island card, and answering on the island resolves the native prompt. Question choices also work with Alt+Shift+1…9.
+- Enable from **Settings → Codex · VS Code bridge → Enable VS Code bridge…**, review the settings diff and confirm the backup/write, then run **Developer: Reload Window** in VS Code. The bridge starts the official Codex binary from the installed extension and uses its existing account, permissions and policy checks. Keep the Codex hooks installed for activity; their permission handler yields only inside the bridge.
+- The setting change preserves other VS Code settings and JSONC comments, refuses an existing custom executable override, and can be disabled from Coucou. Without Coucou, native VS Code prompts remain available. Free-text and secret questions are answered in VS Code.
+
+## 0.3.2 — October 17, 2026
+
+- Codex gets its own persistent pill, session list, activity and Allow/Deny cards. **Settings → Codex → Install hooks…** previews the diff and backs up `~/.codex/hooks.json` (or `$CODEX_HOME/hooks.json`); review and trust the hooks in Codex `/hooks` afterwards. Questions remain in Codex.
+- Recognize imported Codex hooks without an agent tag instead of showing their turn events as Claude Code. Preserve foreign handlers even when they share a matcher group with Coucou.
+
 ## 0.3.1 — October 8, 2026
 
 - Pick a colour for each pill: **Settings → Pill colours** sets the colour of the Mochi head in the pill (and the pill's tint) for Claude Code, opencode, Cline and every integration. Reset brings back the pill's own colour.

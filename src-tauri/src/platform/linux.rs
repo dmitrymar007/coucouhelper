@@ -174,17 +174,25 @@ pub fn shell_extension_remove() -> Result<(), String> {
     gnome_shell::remove()
 }
 
+/// GNOME's extension switch controls the entire app, including autostart.
+pub fn shell_extension_disabled() -> bool {
+    desktop_is_gnome(&std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default())
+        && gnome_shell::disabled()
+}
+
 /// True on GNOME on Wayland when the extension was not running at launch:
 /// the island then lives below the top bar, and the extension would help.
 pub fn shell_extension_missing() -> bool {
     shell_extension_wanted() && !SHELL_EXTENSION.load(Ordering::Relaxed)
 }
 
-/// Starts following the GNOME Shell extension, if it was there at launch.
-/// Main thread only.
+/// Always follow GNOME's switch, even when the island uses the fallback.
+/// Only register the island if the extension was there at launch and GTK is
+/// on native Wayland. Main thread only.
 pub fn shell_extension_start(on_event: impl Fn(ShellEvent) + 'static) {
-    if SHELL_EXTENSION.load(Ordering::Relaxed) && !X11.load(Ordering::Relaxed) {
-        gnome_shell::start(on_event);
+    if desktop_is_gnome(&std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default()) {
+        let register = SHELL_EXTENSION.load(Ordering::Relaxed) && !X11.load(Ordering::Relaxed);
+        gnome_shell::start(register, on_event);
     }
 }
 

@@ -17,10 +17,14 @@ const CLAUDE_ID = "integration_claude";
  * other agent's request goes back to its terminal, since a Claude Code-shaped
  * answer would mean nothing to it.
  */
-const APPROVAL_AGENTS: ReadonlySet<string> = new Set(["agent_opencode"]);
+const APPROVAL_AGENTS: ReadonlySet<string> = new Set(["agent_opencode", "agent_codex"]);
 
-/** Puts the opencode and Cline pills up when their integration is installed. */
+/** Puts the Codex, opencode and Cline pills up when their integration is installed. */
 export async function showDeclaredAgents() {
+  const codexHooks = await Bridge.codexHooksStatus();
+  const codex = DECLARED_AGENTS.get("agent_codex")!;
+  if (codexHooks?.installed) State.upsertExternalAgent("agent_codex", codex.name, codex.color);
+  else State.removeTask("agent_codex");
   const plugin = await Bridge.opencodePluginStatus();
   const opencode = DECLARED_AGENTS.get("agent_opencode")!;
   if (plugin?.installed) State.upsertExternalAgent("agent_opencode", opencode.name, opencode.color);
@@ -105,6 +109,9 @@ export interface HookPayload {
   tool_input?: Record<string, unknown>;
   /** Optional agent tag: lowercase, digits and hyphens, ≤ 24 chars. */
   coucou_agent?: string;
+  /** Native App Server bridge can return typed question answers. */
+  coucou_transport?: string;
+  coucou_async?: boolean;
   /** Linux relay: the session's ancestor processes, nearest first. */
   ancestor_pids?: unknown;
   /** On Stop: what the session has cost (opencode) and the context its last
@@ -239,12 +246,12 @@ function settledElsewhere(island: Island, name: string, payload: HookPayload) {
     clearApproval(island, a.agentId);
   }
   const q = State.pendingQuestion;
-  if (q && q.sessionId === sid && (turnOver || (after && payload.tool_name === "AskUserQuestion"))) {
+  if (q && !q.async && q.sessionId === sid && (turnOver || (after && payload.tool_name === "AskUserQuestion"))) {
     void Bridge.approvalDecline(q.requestId);
     clearQuestion(island, q.agentId);
   }
   for (const c of [...State.cardQueue]) {
-    if (c.payload.session_id !== sid) continue;
+    if (c.payload.session_id !== sid || c.payload.coucou_async) continue;
     const tool = c.payload.tool_name ?? "Tool";
     const same = tool === "AskUserQuestion"
       ? payload.tool_name === "AskUserQuestion"
@@ -351,6 +358,10 @@ export function questionToTerminal(island: Island) {
   if (!q) return;
   void Bridge.approvalDecline(q.requestId);
   clearQuestion(island, q.agentId);
+  if (q.agentId === "agent_codex") {
+    const task = State.tasks.find((t) => t.id === q.agentId);
+    void Bridge.focusTerminal(task?.sessionPids ?? [], task?.sessionCwd ?? null);
+  }
 }
 
 /** Takes the approval card down and hands the island back. */
@@ -425,6 +436,11 @@ const RELAY_WAIT_MS = 108_000;
  */
 function presentCard(island: Island, card: QueuedCard): boolean {
   const { requestId, agentId, payload } = card;
+  // Codex PermissionRequest cannot carry updatedInput answers.
+  if (agentId === "agent_codex" && payload.tool_name === "AskUserQuestion" && payload.coucou_transport !== "codex-app-server") {
+    void Bridge.approvalDecline(requestId);
+    return false;
+  }
   // A queued request has already spent part of its relay's wait.
   const left = Math.max(5_000, RELAY_WAIT_MS - (Date.now() - card.arrivedAt));
   if (pendingTimeout != null) window.clearTimeout(pendingTimeout);
@@ -437,6 +453,7 @@ function presentCard(island: Island, card: QueuedCard): boolean {
     }
     State.pendingQuestion = {
       requestId, agentId, sessionId: payload.session_id ?? "", questions, index: 0, answers: {}, picked: [],
+      async: payload.coucou_async === true,
     };
     void Bridge.approvalAck(requestId);
     State.updateTask(agentId, "question");
@@ -616,6 +633,7 @@ function handleHook(island: Island, payload: HookPayload) {
     }
 
     case "Stop":
+      if (State.pendingQuestion?.agentId === agentId && State.pendingQuestion.async) break;
       State.updateTask(agentId, "finished");
       if (payload.message) State.appendStep(agentId, payload.message.slice(0, 60));
       Sound.play("finish");
@@ -724,6 +742,10 @@ function noteSession(
       }
       break;
     case "Stop":
+      if (State.pendingQuestion?.async && State.pendingQuestion.sessionId === sid) {
+        State.noteSession(agentId, sid, { ...where, ...spent, state: "question", step: "Waiting for you" });
+        break;
+      }
       State.noteSession(agentId, sid, { ...where, ...spent, state: "finished", step: payload.message?.slice(0, 80) || "Done" });
       break;
     case "StopFailure":

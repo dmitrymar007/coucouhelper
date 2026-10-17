@@ -102,6 +102,16 @@ export const Bridge = {
   /** Writes to %LOCALAPPDATA%\Coucou\coucou.log, next to the Rust lines. */
   log: (message: string) => call<void>("log_line", { message }),
 
+  codexVSCodeStatus: () => call<CodexVSCodeStatus>("codex_vscode_status"),
+  codexVSCodePreview: (install: boolean) => callOrThrow<HookPreview>("codex_vscode_preview", { install }),
+  codexVSCodeApply: (install: boolean, fingerprint: string) =>
+    callOrThrow<string>("codex_vscode_apply", { install, fingerprint }),
+
+  codexHooksStatus: () => call<HookStatus>("codex_hooks_status"),
+  codexHooksPreview: (install: boolean) => callOrThrow<HookPreview>("codex_hooks_preview", { install }),
+  codexHooksApply: (install: boolean, fingerprint: string) =>
+    callOrThrow<string>("codex_hooks_apply", { install, fingerprint }),
+
   // ── Claude Code hooks ─────────────────────────────────────────────────────
   hooksStatus: () => call<HookStatus>("hooks_status"),
   /** Diff to show before anything is written. `install: false` previews removal. */
@@ -211,6 +221,14 @@ export interface ChatSession {
 export interface ChatStatus {
   running: boolean;
   sessionId: string | null;
+}
+
+export interface CodexVSCodeStatus {
+  installed: boolean;
+  settingsPath: string;
+  launcherPath: string;
+  codexPath: string | null;
+  ready: boolean;
 }
 
 export interface ClaudeInstall {

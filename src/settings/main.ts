@@ -4,7 +4,7 @@
 
 import "./settings.css";
 import {
-  Bridge, onEvent, type ClineHooksStatus, type HookStatus, type OpencodePluginStatus, type ShellExtensionStatus, type UpdateStatus,
+  Bridge, onEvent, type ClineHooksStatus, type CodexVSCodeStatus, type HookStatus, type OpencodePluginStatus, type ShellExtensionStatus, type UpdateStatus,
 } from "../core/bridge";
 import { DECLARED_AGENTS, DEFAULT_SETTINGS, INTEGRATION_AGENTS, type Settings } from "../core/state";
 import { API_MODELS, CLI_MODELS } from "../core/models";
@@ -46,23 +46,28 @@ function renderDiff(text: string): HTMLElement {
 
 // ── Claude Code section ───────────────────────────────────────────────────────
 
-function claudeSection(status: HookStatus): HTMLElement {
+function agentHooksSection(status: HookStatus, codex = false): HTMLElement {
+  const agent = codex ? "Codex" : "Claude Code";
+  const filename = codex ? "hooks.json" : "settings.json";
+  const api = codex
+    ? { status: Bridge.codexHooksStatus, preview: Bridge.codexHooksPreview, apply: Bridge.codexHooksApply }
+    : { status: Bridge.hooksStatus, preview: Bridge.hooksPreview, apply: Bridge.hooksApply };
   const body = h("div", { style: "display:flex;flex-direction:column;gap:12px" });
   const section = h(
     "section",
     {},
-    h("h2", {}, statusDot(status.installed), h("span", { text: "Claude Code" })),
+    h("h2", {}, statusDot(status.installed), h("span", { text: agent })),
     body,
   );
 
   const rebuild = async () => {
-    const fresh = await Bridge.hooksStatus();
+    const fresh = await api.status();
     if (fresh) Object.assign(status, fresh);
     clear(body);
     draw();
     const head = section.querySelector("h2")!;
     clear(head);
-    head.append(statusDot(status.installed), h("span", { text: "Claude Code" }));
+    head.append(statusDot(status.installed), h("span", { text: agent }));
   };
 
   function draw() {
@@ -70,11 +75,11 @@ function claudeSection(status: HookStatus): HTMLElement {
       h("div", {
         class: "hint",
         text: status.installed
-          ? "Coucou is hooked into your Claude Code sessions. Tool calls, questions and permission requests show up in the island, and you can answer them there."
-          : "Install the hooks to see your Claude Code sessions in the island and approve permissions without leaving what you are doing.",
+          ? `Coucou is hooked into your ${agent} sessions. Tool calls and permission requests show up in its own island card.`
+          : `Install the hooks to see your ${agent} sessions in the island and approve permissions without leaving what you are doing.`,
       }),
       h("div", { class: "row" },
-        h("label", { text: "settings.json" }),
+        h("label", { text: filename }),
         h("span", { class: "path", text: status.settingsPath }),
       ),
       h("div", { class: "row" },
@@ -91,6 +96,9 @@ function claudeSection(status: HookStatus): HTMLElement {
       }));
     }
 
+    if (codex) body.append(h("div", { class: "hint", text:
+      "Review and trust these hooks in Codex /hooks. Enable the VS Code bridge below to answer permission requests and questions from either VS Code or the island.",
+    }));
     const actions = h("div", { class: "row" });
     const install = h("button", {
       class: "primary",
@@ -117,7 +125,7 @@ function claudeSection(status: HookStatus): HTMLElement {
   async function showPreview(install: boolean) {
     let preview;
     try {
-      preview = await Bridge.hooksPreview(install);
+      preview = await api.preview(install);
     } catch (err) {
       // An unreadable or invalid settings.json stops here rather than being
       // treated as empty and written over.
@@ -137,7 +145,7 @@ function claudeSection(status: HookStatus): HTMLElement {
       h("div", {
         class: "hint",
         text: install
-          ? "This is exactly what will change in your settings.json. Your own hooks are left untouched."
+          ? `This is exactly what will change in your ${filename}. Your own hooks are left untouched.`
           : "This removes Coucou's entries only. Your own hooks are left untouched.",
       }),
       renderDiff(preview.diff),
@@ -152,11 +160,11 @@ function claudeSection(status: HookStatus): HTMLElement {
     confirm.addEventListener("click", async () => {
       confirm.disabled = true;
       try {
-        const backup = await Bridge.hooksApply(install, preview.fingerprint);
+        const backup = await api.apply(install, preview.fingerprint);
         clear(body);
         body.append(h("div", {
           class: "notice ok",
-          text: `Done. Previous settings saved as ${backup}. Open a new Claude Code session to pick the hooks up.`,
+          text: `Done. Previous settings saved as ${backup}. Open a new ${agent} session to pick the hooks up.${codex ? " Review and trust the Coucou hooks in Codex /hooks before using them." : ""}`,
         }));
         window.setTimeout(() => void rebuild(), 2600);
       } catch (err) {
@@ -170,6 +178,56 @@ function claudeSection(status: HookStatus): HTMLElement {
     })));
   }
 
+  draw();
+  return section;
+}
+
+/** Native Codex prompts mirrored without blocking the VS Code interface. */
+function codexVSCodeSection(initial: CodexVSCodeStatus): HTMLElement {
+  let status = initial;
+  const body = h("div", { style: "display:flex;flex-direction:column;gap:12px" });
+  const dot = statusDot(status.installed);
+  const section = h("section", {}, h("h2", {}, dot, h("span", { text: "Codex · VS Code bridge" })), body);
+  function draw() {
+    clear(body);
+    dot.style.background = status.installed ? "#22c55e" : "#f4505e";
+    body.append(
+      h("div", { class: "hint", text:
+        "Show the same permission requests and multiple-choice questions in VS Code and on the island. Answer in either place; the first answer closes the other card.",
+      }),
+      h("div", { class: "row" }, h("label", { text: "VS Code settings" }), h("span", { class: "path", text: status.settingsPath })),
+      h("div", { class: "row" }, h("label", { text: "Official Codex" }), h("span", { class: "path", text: status.codexPath ?? "Not found" })),
+      h("div", { class: "hint", text:
+        "This sets chatgpt.cliExecutable to Coucou's local bridge, which starts the official Codex from your installed extension. Keep the hooks above installed for session activity. Reload VS Code after enabling or disabling the bridge.",
+      }),
+    );
+    const enable = h("button", { class: "primary", text: status.installed ? "Reinstall VS Code bridge…" : "Enable VS Code bridge…", onclick: () => void preview(true) });
+    enable.disabled = !status.ready;
+    const actions = h("div", { class: "row" }, enable);
+    if (status.installed) actions.append(h("button", { class: "danger", text: "Disable bridge…", onclick: () => void preview(false) }));
+    body.append(actions);
+  }
+  async function preview(install: boolean) {
+    try {
+      const plan = await Bridge.codexVSCodePreview(install);
+      if (!plan) return;
+      clear(body);
+      body.append(h("div", { class: "hint", text: "Only the Codex executable setting changes. Comments and your other VS Code settings are preserved. A backup is saved before writing." }), renderDiff(plan.diff));
+      const confirm = h("button", { class: install ? "primary" : "danger", text: "Back up and write" });
+      confirm.addEventListener("click", async () => {
+        confirm.disabled = true;
+        try {
+          const backup = await Bridge.codexVSCodeApply(install, plan.fingerprint);
+          clear(body);
+          body.append(h("div", { class: "notice ok", text: `Saved. Backup: ${backup}. Reload VS Code (Developer: Reload Window) to use the ${install ? "bridge" : "standard Codex executable"}.` }));
+          const fresh = await Bridge.codexVSCodeStatus();
+          if (fresh) status = fresh;
+          body.append(h("button", { text: "Back", onclick: draw }));
+        } catch (err) { confirm.disabled = false; body.append(h("div", { class: "notice err", text: String(err) })); }
+      });
+      body.append(h("div", { class: "row" }, confirm, h("button", { text: "Cancel", onclick: draw })));
+    } catch (err) { body.append(h("div", { class: "notice err", text: String(err) })); }
+  }
   draw();
   return section;
 }
@@ -584,7 +642,7 @@ function gnomeSection(initial: ShellExtensionStatus): HTMLElement {
     try {
       const st = await Bridge.shellExtensionRemove();
       draw(st);
-      feedback.append(h("div", { class: "notice ok", text: `${st.packaged ? "Turned off" : "Removed"}. GNOME stopped it; restart Coucou to go back to the window below the top bar.` }));
+      feedback.append(h("div", { class: "notice ok", text: `${st.packaged ? "Turned off" : "Removed"}. Coucou will quit.` }));
     } catch (err) {
       feedback.append(h("div", { class: "notice err", text: `Could not remove: ${String(err)}` }));
     }
@@ -604,7 +662,9 @@ function gnomeSection(initial: ShellExtensionStatus): HTMLElement {
           ? "The extension came with the Coucou package; turning it on adds it to the extensions GNOME starts. "
           : "Installing writes the extension to ~/.local/share/gnome-shell/extensions/coucou@coucouhelper and adds it to the " +
             "extensions GNOME starts. ") +
-        "Nothing else of GNOME's is changed. It only acts on Coucou's own island.",
+        "Turning it off in GNOME also quits Coucou and prevents startup while the installed extension is off. " +
+        "To use Coucou again, turn the extension on in GNOME Extensions, then launch Coucou. " +
+        "Locking the screen only suspends the integration.",
     }),
     feedback,
   );
@@ -991,6 +1051,8 @@ async function main() {
   const shell = await Bridge.shellExtensionStatus();
   const opencodePlugin = await Bridge.opencodePluginStatus();
   const clineHooks = await Bridge.clineHooksStatus();
+  const codexHooks = await Bridge.codexHooksStatus();
+  const codexVSCode = await Bridge.codexVSCodeStatus();
   const updates = await Bridge.updateStatus();
 
   const keys = [
@@ -1003,7 +1065,9 @@ async function main() {
   clear(root);
   root.append(
     h("h1", {}, h("span", { text: "Coucou" }), h("span", { class: "version", text: version })),
-    claudeSection(status),
+    agentHooksSection(status),
+    ...(codexHooks ? [agentHooksSection(codexHooks, true)] : []),
+    ...(codexVSCode ? [codexVSCodeSection(codexVSCode)] : []),
     ...(opencodePlugin ? [opencodeSection(opencodePlugin)] : []),
     ...(clineHooks ? [clineSection(clineHooks)] : []),
     ...(shell?.applicable ? [gnomeSection(shell)] : []),

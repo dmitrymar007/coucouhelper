@@ -94,6 +94,7 @@ async function main() {
   await onEvent<null>("screen-changed", () => void Bridge.reposition());
 
   // The settings window writes preferences; apply them here without a restart.
+  await onEvent("agent-hooks-changed", () => void showDeclaredAgents());
   await onEvent<Settings>("settings-changed", (s) => {
     State.settings = { ...State.settings, ...s };
     island.applySettings();

@@ -501,7 +501,7 @@ function buildQuestion(actions: ViewActions): ViewHost {
           row.append(b);
         });
         if (current.multiSelect) row.append(btn("Done", "secondary", () => actions.answer(null)));
-        row.append(btn("In terminal", "secondary", () => actions.questionToTerminal()));
+        row.append(btn(q.agentId === "agent_codex" ? "In VS Code" : "In terminal", "secondary", () => actions.questionToTerminal()));
       }
       // Long or many answers wrap to more rows: the card grows to show them
       // all — Done and In terminal included — instead of clipping them.

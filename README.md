@@ -33,6 +33,11 @@ original project.
   each tool it runs (in the agent's own words when it gives some; hover or click
   for the whole command), done or failed. Several sessions of one agent are listed
   with their project, state and context use.
+- **Codex, too** — its own pill, sessions, tool activity, completion and
+  Allow/Deny cards. Install the hooks from **Settings → Codex**. For native
+  prompts in both VS Code and Coucou, enable **Codex · VS Code bridge** and
+  reload VS Code: permission prompts and multiple-choice questions appear in
+  both places, and the first answer wins. Free-text answers stay in VS Code.
 - **Cline, too** — Cline's tasks in VS Code get their own pill: the prompt, each
   tool, its questions, done or cancelled, cost and tokens. Cline's hooks can't
   approve a tool, so approvals stay in Cline's panel.
@@ -102,14 +107,26 @@ The extension only serves the Coucou installed by the package
 (`/usr/bin/coucou`). Any other build — an AppImage, a `cargo build` — makes
 GNOME Shell ask you once per session whether that file may drive the island.
 
-Without the extension Coucou still works, as a small window right below the top
-bar.
+Before the extension is configured, Coucou opens below the top bar so you can
+install it from Settings. Turning the installed extension off in GNOME Extensions
+quits the entire app and prevents it from starting again at login while the
+extension is off. To resume, turn the extension on and launch Coucou. Locking the
+screen only suspends the integration; it does not quit the app.
 
 ### 4. Connect your agents
 
 - **Claude Code** — **Settings → Claude Code → Install hooks…** You see the exact
   diff for `~/.claude/settings.json` and the path of the dated backup; nothing is
   written until you confirm. Your own hooks are left alone.
+- **Codex** — **Settings → Codex → Install hooks…**, review and trust the hooks
+  in Codex `/hooks`. Then **Settings → Codex · VS Code bridge → Enable VS Code
+  bridge…**, review the diff and confirm. Run **Developer: Reload Window** in
+  VS Code. The bridge uses `chatgpt.cliExecutable` to start the official Codex
+  binary through Coucou; it does not modify the installed extension. Disable
+  it in Coucou and reload VS Code to return to the normal executable. Existing
+  custom executable overrides are not replaced. The bridge currently locates
+  standard `.vscode`, `.vscode-insiders` and `.vscode-oss` extension installs;
+  the settings installer targets VS Code's `Code/User/settings.json`.
 - **opencode** — **Settings → opencode → Install plugin** writes one file,
   `~/.config/opencode/plugin/coucou.js`. Restart opencode.
 - **Cline** — **Settings → Cline → Install hooks** writes one small script per

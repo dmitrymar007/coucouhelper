@@ -82,6 +82,8 @@ export interface AgentQuestion {
 
 /** Questions waiting on the island, answered one after the other. */
 export interface QuestionInfo {
+  /** Async Codex questions may outlive the turn that asked them. */
+  async?: boolean;
   requestId: string;
   agentId: string;
   sessionId: string;
@@ -100,6 +102,8 @@ export interface QueuedCard {
   /** The hook payload as it came: the card is built from it when its turn comes. */
   payload: {
     session_id?: string;
+    coucou_transport?: string;
+    coucou_async?: boolean;
     tool_name?: string;
     tool_input?: Record<string, unknown>;
   };
@@ -155,6 +159,7 @@ export const INTEGRATION_AGENTS: AgentTask[] = [
  * unknown agent.
  */
 export const DECLARED_AGENTS: ReadonlyMap<string, { name: string; color: string }> = new Map([
+  ["agent_codex", { name: "Codex", color: "#10A37F" }],
   ["agent_opencode", { name: "opencode", color: "#FAB283" }],
   ["agent_cline", { name: "Cline", color: "#A78BFA" }],
 ]);
